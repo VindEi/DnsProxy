@@ -3,4 +3,4 @@ DNSniproxy automates the installation and management of CoreDNS and sniproxy to 
 ## 🧠 Quick Install
 
 ```bash
-curl -s https://raw.githubusercontent.com/VindEi/DNSniproxy/main/auto_install.sh | bash
+curl -s https://raw.githubusercontent.com/VindEi/DnsProxy/main/auto_install.sh | bash
