@@ -1,0 +1,170 @@
+#!/bin/bash
+
+#===[ Constants ]===
+PROJECT_NAME="VindE"
+CONFIG_DIR="/etc/coredns/conf.d"
+COREFILE="/etc/coredns/Corefile"
+
+#===[ Colors ]===
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+MAGENTA='\033[0;35m'
+RESET='\033[0m'
+
+#===[ Helpers ]===
+function clear_and_header() {
+    clear
+    echo -e "${CYAN}╔══════════════════════════════╗"
+    echo -e "║     🌐  ${PROJECT_NAME} DNS Manager    ║"
+    echo -e "╚══════════════════════════════╝${RESET}"
+    echo
+}
+
+function service_status() {
+    echo -e "${YELLOW}🔍 Service Status:${RESET}"
+    systemctl is-active --quiet coredns && echo -e "🟢 CoreDNS: ${GREEN}Running${RESET}" || echo -e "🔴 CoreDNS: ${RED}Stopped${RESET}"
+    systemctl is-active --quiet sniproxy && echo -e "🟢 SNIProxy: ${GREEN}Running${RESET}" || echo -e "🔴 SNIProxy: ${RED}Stopped${RESET}"
+    echo
+}
+
+#===[ Install ]===
+function install_vinde() {
+    clear_and_header
+    echo -e "${YELLOW}📦 Installing packages...${RESET}"
+    apt update && apt upgrade -y
+    apt install -y coredns sniproxy ufw
+
+    echo -e "${YELLOW}🔐 Configuring UFW...${RESET}"
+    ufw allow ssh
+    ufw allow 53
+    ufw allow 443
+    ufw --force enable
+
+    echo -e "${YELLOW}📁 Setting up config directories...${RESET}"
+    mkdir -p "$CONFIG_DIR"
+
+    echo -e "${YELLOW}📝 Writing Corefile...${RESET}"
+    tee "$COREFILE" > /dev/null <<EOF
+import conf.d/*.conf
+
+. {
+    forward . 8.8.8.8 1.1.1.1
+    log
+    errors
+}
+EOF
+
+    systemctl enable coredns sniproxy
+    systemctl restart coredns sniproxy
+
+    echo -e "${GREEN}✅ Installation complete.${RESET}"
+    read -p "$(echo -e ${CYAN}Press enter to return to menu...${RESET})"
+}
+
+#===[ Uninstall ]===
+function uninstall_vinde() {
+    clear_and_header
+    echo -e "${YELLOW}🗑️  Uninstalling components...${RESET}"
+    systemctl stop coredns sniproxy
+    systemctl disable coredns sniproxy
+
+    apt remove --purge -y coredns sniproxy ufw
+    apt autoremove -y
+
+    rm -rf "$CONFIG_DIR"
+    rm -f "$COREFILE"
+
+    ufw deny 53
+    ufw deny 443
+
+    echo -e "${GREEN}✅ Uninstallation complete.${RESET}"
+    read -p "$(echo -e ${CYAN}Press enter to return to menu...${RESET})"
+}
+
+#===[ Domains Menu ]===
+function domains_menu() {
+    while true; do
+        clear_and_header
+        echo -e "${MAGENTA}📂 Domains Management${RESET}"
+        echo -e "${CYAN}1) List Current"
+        echo "2) Add Domain"
+        echo "3) Remove Domain"
+        echo "4) Return to Main Menu${RESET}"
+        echo
+        read -p "$(echo -e ${YELLOW}Choose an option: ${RESET})" choice
+        case $choice in
+            1) list_domains ;;
+            2) add_domain ;;
+            3) remove_domain ;;
+            4) break ;;
+            *) echo -e "${RED}Invalid option!${RESET}" && sleep 1 ;;
+        esac
+    done
+}
+
+function list_domains() {
+    clear_and_header
+    echo -e "${MAGENTA}📜 Current domain config files:${RESET}"
+    if [ ! -d "$CONFIG_DIR" ]; then
+        echo -e "${RED}Config directory not found.${RESET}"
+    else
+        files=("$CONFIG_DIR"/*.conf)
+        if [ ${#files[@]} -eq 0 ]; then
+            echo -e "${RED}No domain configs found.${RESET}"
+        else
+            for f in "${files[@]}"; do
+                filename=$(basename "$f")
+                echo -e "${GREEN}- ${filename%.conf}${RESET}"
+            done
+        fi
+    fi
+    echo
+    read -p "$(echo -e ${CYAN}Press enter to return to Domains menu...${RESET})"
+}
+
+function add_domain() {
+    clear_and_header
+    echo -e "${MAGENTA}➕ Add domain functionality will be implemented later.${RESET}"
+    read -p "$(echo -e ${CYAN}Press enter to return to Domains menu...${RESET})"
+}
+
+function remove_domain() {
+    clear_and_header
+    echo -e "${MAGENTA}➖ Remove a domain${RESET}"
+    read -p $'\e[1;33mEnter domain to remove (e.g. gemini.google.com): \e[0m' domain
+    filepath="$CONFIG_DIR/$domain.conf"
+    if [ -f "$filepath" ]; then
+        rm -f "$filepath"
+        echo -e "${GREEN}✅ Removed domain config: $domain${RESET}"
+    else
+        echo -e "${RED}⚠️  Domain config not found: $domain${RESET}"
+    fi
+    read -p "$(echo -e ${CYAN}Press enter to return to Domains menu...${RESET})"
+}
+
+
+#===[ Main Menu ]===
+function main_menu() {
+    while true; do
+        clear_and_header
+        service_status
+        echo -e "${CYAN}1) Install $PROJECT_NAME"
+        echo "2) Uninstall $PROJECT_NAME"
+        echo "3) Domains"
+        echo "4) Exit${RESET}"
+        echo
+        read -p "$(echo -e ${YELLOW}Choose an option: ${RESET})" choice
+        case $choice in
+            1) install_vinde ;;
+            2) uninstall_vinde ;;
+            3) domains_menu ;;
+            4) exit 0 ;;
+            *) echo -e "${RED}Invalid option!${RESET}" && sleep 1 ;;
+        esac
+    done
+}
+
+#===[ Start Script ]===
+main_menu
