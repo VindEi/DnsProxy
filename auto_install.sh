@@ -7,10 +7,14 @@ FILES=("DnsProxy" "Install.sh" "Uninstall.sh" "AddDomain.sh")
 
 echo "🌐 Starting DnsProxy auto-install..."
 
+# Update and upgrade system packages first
+echo "🔄 Updating and upgrading system packages non-interactively..."
+sudo apt update -y && sudo apt upgrade -y
+
 # Make sure git is installed
 if ! command -v git &> /dev/null; then
     echo "📦 Git not found, installing git..."
-    sudo apt update && sudo apt install -y git
+    sudo apt install -y git
 fi
 
 # Clone or update repo to /tmp/DnsProxy
