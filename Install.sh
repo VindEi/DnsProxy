@@ -129,3 +129,6 @@ function install_Service() {
     echo -e "${GREEN}✅ All services installed and configured successfully.${RESET}"
     read -p "Press enter to return to menu..."
 }
+
+# Call the main installation function to start the process
+install_Service
