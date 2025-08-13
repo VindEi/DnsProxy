@@ -1,120 +1,95 @@
 #!/bin/bash
-set -e
 
-#===[ Constants ]===
-VPS_IP="193.56.135.102"
+# --- Script Configuration ---
+# Set the base directories based on your CoreDNS setup
 CONF_DIR="/etc/coredns/conf.d"
 HOSTS_DIR="/etc/unblocker"
 
-#===[ Colors ]===
-GREEN='\033[0;32m'
-RED='\033[0;31m'
-YELLOW='\033[1;33m'
-CYAN='\033[0;36m'
-RESET='\033[0m'
+# Ensure the required directories exist
+mkdir -p "$CONF_DIR"
+mkdir -p "$HOSTS_DIR"
 
-#===[ Usage Check ]===
-if [ "$#" -ne 1 ]; then
-    echo -e "${RED}Usage:${RESET} sudo $0 example.com"
+# --- Main Script Logic ---
+
+# 1. Ask for a service name to use for the files
+read -p "Enter the name of the service (e.g., spotify, gemini): " SERVICE_NAME
+
+if [[ -z "$SERVICE_NAME" ]]; then
+    echo "Error: Service name cannot be empty. Exiting."
     exit 1
 fi
 
-DOMAIN="$1"
-BASENAME=$(basename "$DOMAIN")
-CONF_FILE="$CONF_DIR/$BASENAME.conf"
-HOSTS_FILE="$HOSTS_DIR/$BASENAME.hosts"
+# 2. Ask the user to choose between automatic and manual
+echo "---"
+echo "Select a configuration method:"
+echo "1) Automatic"
+echo "2) Manual"
+read -p "Enter your choice (1 or 2): " CHOICE
 
-mkdir -p "$CONF_DIR" "$HOSTS_DIR"
+case $CHOICE in
+    1)
+        # Handle the 'automatic' option by launching a separate Python script
+        echo "---"
+        read -p "Enter the full path to your Python automatic script (e.g., /path/to/script.py): " SCRIPT_PATH
+        
+        if [ ! -f "$SCRIPT_PATH" ]; then
+            echo "Error: The specified script does not exist. Exiting."
+            exit 1
+        fi
+        
+        if [ ! -x "$SCRIPT_PATH" ]; then
+            echo "Warning: The script is not executable. Attempting to run with 'python3'."
+        fi
+        
+        read -p "Enter the IP address of your sniproxy server: " SNIPROXY_IP
+        
+        echo "---"
+        echo "Launching automatic configuration for '$SERVICE_NAME'..."
+        # Launch the Python script with the necessary arguments
+        python3 "$SCRIPT_PATH" "$SERVICE_NAME" "$SNIPROXY_IP"
+        
+        echo "Automatic script finished."
+        ;;
+    2)
+        # 3. Handle the 'manual' option
+        echo "---"
+        echo "Proceeding with manual configuration for '$SERVICE_NAME'."
 
-#===[ Check python3/requests ]===
-if ! command -v python3 &>/dev/null; then
-    echo -e "${YELLOW}Installing python3 & requests...${RESET}"
-    apt update && apt install -y python3 python3-pip
-fi
+        # Define file paths
+        HOSTS_FILE="${HOSTS_DIR}/${SERVICE_NAME}.hosts"
+        CONF_FILE="${CONF_DIR}/${SERVICE_NAME}.conf"
 
-python3 - <<EOF || echo -e "${YELLOW}requests module may already be installed${RESET}"
-import requests
-EOF
+        # Create the hosts file and leave it empty
+        touch "$HOSTS_FILE"
+        echo "Created empty hosts file: $HOSTS_FILE"
 
-pip3 install requests --quiet >/dev/null 2>&1 || true
-
-#===[ Subdomain Fetch ]===
-echo -e "${CYAN}📡 Fetching subdomains for *.$DOMAIN from crt.sh...${RESET}"
-
-python3 <<END > "$HOSTS_FILE" || true
-import requests
-import time
-import sys
-
-domain = "$DOMAIN"
-ip = "$VPS_IP"
-max_retries = 5
-headers = {'User-Agent': 'Mozilla/5.0'}
-
-def fetch_subdomains():
-    url = f"https://crt.sh/json?q={domain}"
-    for attempt in range(1, max_retries + 1):
-        try:
-            print(f"Attempt {attempt}...", file=sys.stderr)
-            resp = requests.get(url, headers=headers, timeout=20)
-            if resp.status_code == 200:
-                return {entry['name_value'] for entry in resp.json()}
-            else:
-                print(f"Error: HTTP {resp.status_code}", file=sys.stderr)
-        except Exception as e:
-            print(f"Error: {e}", file=sys.stderr)
-        time.sleep(2)
-    return set()
-
-def clean(d):
-    return d.replace("*.", "").strip().lower()
-
-raw = fetch_subdomains()
-subs = set()
-for entry in raw:
-    for line in entry.splitlines():
-        if line.endswith(domain):
-            subs.add(clean(line))
-
-subs.add(domain)
-
-for sub in sorted(subs):
-    print(f"{ip} {sub}")
-END
-
-#===[ Check for fallback ]===
-if [ ! -s "$HOSTS_FILE" ]; then
-    echo -e "${YELLOW}⚠️ Failed to auto-fetch. Switching to manual mode...${RESET}"
-    echo -e "${CYAN}Enter comma-separated subdomains (or press Enter to use defaults):${RESET}"
-    echo -e "Example: ${GREEN}www.$DOMAIN, open.$DOMAIN, api.$DOMAIN${RESET}"
-    read -rp "> " MANUAL
-
-    if [ -z "$MANUAL" ]; then
-        SUBDOMAINS="www.$DOMAIN open.$DOMAIN api.$DOMAIN $DOMAIN"
-    else
-        SUBDOMAINS=$(echo "$MANUAL" | tr ',' ' ')
-    fi
-
-    echo -e "${YELLOW}📝 Writing fallback to ${HOSTS_FILE}...${RESET}"
-    : > "$HOSTS_FILE"
-    for sub in $SUBDOMAINS; do
-        echo "$VPS_IP $sub" >> "$HOSTS_FILE"
-    done
-fi
-
-#===[ Write CoreDNS Config ]===
-echo -e "${YELLOW}🧩 Writing CoreDNS config to ${CONF_FILE}...${RESET}"
-tee "$CONF_FILE" > /dev/null <<EOF
-$DOMAIN {
-    hosts $HOSTS_FILE {
+        # Create the CoreDNS configuration file
+        cat <<EOL > "$CONF_FILE"
+${SERVICE_NAME} {
+    hosts ${HOSTS_FILE} {
         fallthrough
         ttl 300
     }
     log
     errors
 }
-EOF
+EOL
+        echo "Created CoreDNS config file: $CONF_FILE"
+        echo "---"
 
-#===[ Restart CoreDNS ]===
-echo -e "${CYAN}🔄 Restarting CoreDNS...${RESET}"
-systemctl restart coredns && echo -e "${GREEN}✅ $DOMAIN added/updated successfully!${RESET}"
+        # 4. Tell the user what to do next
+        echo "The hosts file is now ready for you to edit."
+        echo "Please add your domains to the following file:"
+        echo ""
+        echo "    $HOSTS_FILE"
+        echo ""
+        echo "Each line in the file should be in the format:"
+        echo "    193.56.135.102 <domain>"
+        echo ""
+        echo "After you have finished, restart your CoreDNS service to apply the changes."
+        ;;
+    *)
+        echo "Invalid choice. Exiting."
+        exit 1
+        ;;
+esac
