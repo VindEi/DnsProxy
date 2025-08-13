@@ -4,6 +4,7 @@
 PROJECT_NAME="DnsProxy"
 BASE_DIR="/usr/local/bin/DnsProxy"
 CONFIG_DIR="/etc/coredns/conf.d"
+HOSTS_DIR="/etc/unblocker"
 
 #===[ Colors ]===
 RED='\033[0;31m'
@@ -16,7 +17,7 @@ RESET='\033[0m'
 function clear_and_header() {
     clear
     echo -e "${CYAN}╔══════════════════════════════╗"
-    echo -e "║     🌐  DnsProxy Manager     ║"
+    echo -e "║    🌐  DnsProxy Manager      ║"
     echo -e "╚══════════════════════════════╝${RESET}"
     echo
 }
@@ -24,9 +25,10 @@ function clear_and_header() {
 function service_status() {
     echo -e "${YELLOW}🔍 Service Status:${RESET}"
     systemctl is-active --quiet coredns && echo -e "🟢 CoreDNS: ${GREEN}Running${RESET}" || echo -e "🔴 CoreDNS: ${RED}Stopped${RESET}"
-    systemctl is-active --quiet sniproxy && echo -e "🟢 SNIProxy: ${GREEN}Running${RESET}" || echo -e "🔴 SNIProxy: ${RED}Stopped${RESET}"
+    pgrep sniproxy &>/dev/null && echo -e "🟢 SNIProxy: ${GREEN}Running${RESET}" || echo -e "🔴 SNIProxy: ${RED}Stopped${RESET}"
     echo
 }
+
 
 function main_menu() {
     while true; do
@@ -39,8 +41,8 @@ function main_menu() {
         echo
         read -p "Choose an option: " choice
         case "$choice" in
-            1) bash "$BASE_DIR/Install.sh" ;;
-            2) bash "$BASE_DIR/Uninstall.sh" ;;
+            1) "$BASE_DIR/Install.sh" ;;
+            2) "$BASE_DIR/Uninstall.sh" ;;
             3) domains_menu ;;
             4) exit 0 ;;
             *) echo -e "${RED}Invalid option.${RESET}"; sleep 1 ;;
@@ -52,33 +54,78 @@ function domains_menu() {
     while true; do
         clear_and_header
         echo -e "${YELLOW}📂 Domains Menu:${RESET}"
-        echo -e "1) 📃 List current"
-        echo -e "2) ➕ Add domain"
-        echo -e "3) 🗑️  Remove domain"
-        echo -e "4) 🔙 Back${RESET}"
+        echo -e "1) 📃 List current domains"
+        echo -e "2) ➕ Add a new service"
+        echo -e "3) 🗑️  Remove an existing service"
+        echo -e "4) 📝 View a service's host file"
+        echo -e "5) 🔙 Back${RESET}"
         echo
         read -p "Choose an option: " dom_choice
         case "$dom_choice" in
             1)
-                echo -e "${CYAN}Existing domains:${RESET}"
+                echo -e "${CYAN}Existing services:${RESET}"
+                local found=false
                 for file in "$CONFIG_DIR"/*.conf; do
-                    [ -e "$file" ] && basename "$file" .conf
+                    if [ -e "$file" ]; then
+                        basename "$file" .conf
+                        found=true
+                    fi
                 done
+                if ! $found; then
+                    echo -e "${YELLOW}(No services found)${RESET}"
+                fi
                 echo
                 read -p "Press enter to return..." ;;
             2)
-				echo -ne "${YELLOW}Enter domain to add (e.g. example.com): ${RESET}"
-				read domain
-				/usr/local/bin/DnsProxy/AddDomain.sh "$domain"
-				read -p "Press enter to return..."
-				;;
+                # Corrected logic to add a new service
+                echo -ne "${YELLOW}Enter the service name to add (e.g., spotify, gemini): ${RESET}"
+                read service_name
+                echo -e "---"
+                echo -e "${YELLOW}Select a configuration method:${RESET}"
+                echo -e "1) Automatic"
+                echo -e "2) Manual"
+                read -p "Enter your choice (1 or 2): " config_choice
+
+                case "$config_choice" in
+                    1) method="auto" ;;
+                    2) method="manual" ;;
+                    *) echo -e "${RED}Invalid choice. Returning to menu.${RESET}"; sleep 2; continue ;;
+                esac
+
+                # Pass both variables to the AddDomain.sh script
+                "$BASE_DIR/AddDomain.sh" "$service_name" "$method"
+                read -p "Press enter to return..." ;;
             3)
-				echo -ne "${YELLOW}Enter domain to remove (e.g. gemini.google.com): ${RESET}"
-				read domain
-				rm -f "$CONFIG_DIR/$domain.conf" && echo -e "${GREEN}Removed $domain.conf${RESET}" || echo -e "${RED}Not found.${RESET}"
-				systemctl restart coredns
-				read -p "Press enter to return..." ;;
-            4) return ;;
+                # Corrected logic to remove a service
+                echo -ne "${YELLOW}Enter the service name to remove (e.g., gemini, spotify): ${RESET}"
+                read service_name
+                local conf_file="$CONFIG_DIR/$service_name.conf"
+                local hosts_file="$HOSTS_DIR/$service_name.hosts"
+
+                if [ -f "$conf_file" ] || [ -f "$hosts_file" ]; then
+                    sudo rm -f "$conf_file" "$hosts_file"
+                    echo -e "${GREEN}✅ Removed configuration files for '$service_name'${RESET}"
+                    sudo systemctl restart coredns
+                    echo -e "${CYAN}CoreDNS service restarted.${RESET}"
+                else
+                    echo -e "${RED}❌ No configuration found for '$service_name'.${RESET}"
+                fi
+                read -p "Press enter to return..." ;;
+            4)
+                # Option to view the contents of a hosts file
+                echo -ne "${YELLOW}Enter the service name to view (e.g., gemini, spotify): ${RESET}"
+                read service_name
+                local hosts_file="$HOSTS_DIR/$service_name.hosts"
+
+                if [ -f "$hosts_file" ]; then
+                    echo -e "${CYAN}--- Contents of $hosts_file ---${RESET}"
+                    cat "$hosts_file"
+                    echo -e "${CYAN}-------------------------------${RESET}"
+                else
+                    echo -e "${RED}❌ Hosts file not found for '$service_name'.${RESET}"
+                fi
+                read -p "Press enter to return..." ;;
+            5) return ;;
             *) echo -e "${RED}Invalid option.${RESET}"; sleep 1 ;;
         esac
     done
