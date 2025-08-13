@@ -56,79 +56,64 @@ EOF
     return 0
 }
 
-function configure_sniproxy() {
-    echo -e "${YELLOW}📝 Configuring SNIProxy with the provided config...${RESET}"
-    sudo tee "/etc/sniproxy.conf" > /dev/null <<EOF
-user daemon
-pidfile /var/run/sniproxy.pid
+function configure_nginx_stream() {
+    echo -e "${YELLOW}📝 Configuring NGINX stream mode for dynamic SNI TCP proxy...${RESET}"
 
-error_log {
-    syslog daemon
-    priority notice
-}
+    sudo mkdir -p /etc/nginx/stream.conf.d
 
-access_log {
-    syslog daemon
-    priority notice
-}
+    sudo tee /etc/nginx/stream.conf.d/unblocker.conf > /dev/null <<EOF
+stream {
+    resolver 1.1.1.1 8.8.8.8 valid=30s;
 
-listen 443 {
-    proto tls
-    table https_hosts
-}
+    # HTTPS/TLS forwarding with SNI
+    server {
+        listen 443;
+        proxy_pass \$ssl_preread_server_name:443;
+        ssl_preread on;
+    }
 
-# Optional: also proxy HTTP requests (some domains might fallback to port 80)
-listen 80 {
-    proto http
-    table http_hosts
-    fallback 127.0.0.1:8080
-}
-
-# Wildcard proxying for all HTTPS domains
-table https_hosts {
-    .* *
-}
-
-# Wildcard proxying for all HTTP domains
-table http_hosts {
-    .* *
+    # HTTP forwarding
+    server {
+        listen 80;
+        proxy_pass \$ssl_preread_server_name:80;
+        ssl_preread on;
+    }
 }
 EOF
-    echo -e "${GREEN}✅ SNIProxy configuration is complete.${RESET}"
+
+    sudo nginx -t
+    sudo systemctl restart nginx
+
+    echo -e "${GREEN}✅ NGINX stream mode with dynamic SNI is ready.${RESET}"
 }
 
 function install_Service() {
     clear
     echo -e "${YELLOW}📦 Updating and installing packages...${RESET}"
     sudo apt update && sudo apt upgrade -y
-    sudo apt install -y sniproxy ufw
+    sudo apt install -y nginx-extras ufw
 
-    # Call the dedicated CoreDNS installation function
     install_CoreDNS
     if [ $? -ne 0 ]; then
         return 1
     fi
 
-    # Call the new SNIProxy configuration function
-    configure_sniproxy
+    configure_nginx_stream
 
     echo -e "${YELLOW}🔐 Configuring UFW...${RESET}"
     sudo ufw allow ssh comment 'SSH port'
-    sudo ufw allow 53 comment 'CoreDns for Dns traffic'
-    sudo ufw allow 80 comment 'SNIProxy HTTP traffic'
-    sudo ufw allow 443 comment 'SNIProxy HTTPS traffic'
+    sudo ufw allow 53 comment 'CoreDNS DNS traffic'
+    sudo ufw allow 80 comment 'NGINX HTTP traffic'
+    sudo ufw allow 443 comment 'NGINX HTTPS traffic'
     sudo ufw --force enable
 
-    echo -e "${YELLOW}🔄 Reloading systemd daemon and enabling service...${RESET}"
+    echo -e "${YELLOW}🔄 Reloading systemd daemon and enabling services...${RESET}"
     sudo systemctl daemon-reload
     sudo systemctl enable coredns
     sudo systemctl restart coredns
-    sudo systemctl enable sniproxy
-    sudo systemctl restart sniproxy
+    sudo systemctl enable nginx
+    sudo systemctl restart nginx
 
-    echo -e "${GREEN}✅ All services installed and configured successfully.${RESET}"
+    echo -e "${GREEN}✅ CoreDNS + NGINX (dynamic SNI) installed and configured successfully.${RESET}"
     read -p "Press enter to return to menu..."
 }
-
-# Call the main installation function to start the process
-install_Service
