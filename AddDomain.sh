@@ -4,6 +4,27 @@
 # Set the base directories based on your CoreDNS setup
 CONF_DIR="/etc/coredns/conf.d"
 HOSTS_DIR="/etc/unblocker"
+# The sniproxy IP address is hardcoded here, as requested.
+SNIPROXY_IP="193.56.135.102"
+# Set the full path to your Python script
+# NOTE: This path should be updated to your actual location
+PYTHON_SCRIPT_PATH="$(dirname "$0")/AutoDomain.py"
+# --- Colors for a better user experience ---
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+CYAN='\033[0;36m'
+RESET='\033[0m'
+
+# Check for required arguments
+if [ "$#" -ne 2 ]; then
+    echo -e "${RED}❌ Usage: $0 <service_name> <method_choice>${RESET}"
+    echo "  <method_choice> should be 'auto' or 'manual'."
+    exit 1
+fi
+
+SERVICE_NAME="$1"
+CHOICE="$2"
 
 # Ensure the required directories exist
 mkdir -p "$CONF_DIR"
@@ -11,57 +32,59 @@ mkdir -p "$HOSTS_DIR"
 
 # --- Main Script Logic ---
 
-# 1. Ask for a service name to use for the files
-read -p "Enter the name of the service (e.g., spotify, gemini): " SERVICE_NAME
-
-if [[ -z "$SERVICE_NAME" ]]; then
-    echo "Error: Service name cannot be empty. Exiting."
-    exit 1
-fi
-
-# 2. Ask the user to choose between automatic and manual
-echo "---"
-echo "Select a configuration method:"
-echo "1) Automatic"
-echo "2) Manual"
-read -p "Enter your choice (1 or 2): " CHOICE
-
-case $CHOICE in
-    1)
+case "$CHOICE" in
+    "auto")
         # Handle the 'automatic' option by launching a separate Python script
-        echo "---"
-        read -p "Enter the full path to your Python automatic script (e.g., /path/to/script.py): " SCRIPT_PATH
-        
-        if [ ! -f "$SCRIPT_PATH" ]; then
-            echo "Error: The specified script does not exist. Exiting."
+        echo -e "${YELLOW}---${RESET}"
+        echo -e "${CYAN}Launching automatic configuration for '$SERVICE_NAME'...${RESET}"
+
+        if [ ! -f "$PYTHON_SCRIPT_PATH" ]; then
+            echo -e "${RED}❌ Error: The Python script was not found at '$PYTHON_SCRIPT_PATH'.${RESET}"
             exit 1
         fi
         
-        if [ ! -x "$SCRIPT_PATH" ]; then
-            echo "Warning: The script is not executable. Attempting to run with 'python3'."
+        if [ ! -x "$PYTHON_SCRIPT_PATH" ]; then
+            echo -e "${YELLOW}⚠️ Warning: The script is not executable. Attempting to run with 'python3'.${RESET}"
         fi
         
-        read -p "Enter the IP address of your sniproxy server: " SNIPROXY_IP
-        
-        echo "---"
-        echo "Launching automatic configuration for '$SERVICE_NAME'..."
         # Launch the Python script with the necessary arguments
-        python3 "$SCRIPT_PATH" "$SERVICE_NAME" "$SNIPROXY_IP"
+        python3 "$PYTHON_SCRIPT_PATH" "$SERVICE_NAME" "$SNIPROXY_IP"
         
-        echo "Automatic script finished."
+        echo -e "${YELLOW}Automatic script finished.${RESET}"
         ;;
-    2)
-        # 3. Handle the 'manual' option
-        echo "---"
-        echo "Proceeding with manual configuration for '$SERVICE_NAME'."
+    "manual")
+        # Handle the 'manual' option
+        echo -e "${YELLOW}---${RESET}"
+        echo -e "${CYAN}Proceeding with manual configuration for '$SERVICE_NAME'.${RESET}"
 
         # Define file paths
         HOSTS_FILE="${HOSTS_DIR}/${SERVICE_NAME}.hosts"
         CONF_FILE="${CONF_DIR}/${SERVICE_NAME}.conf"
 
-        # Create the hosts file and leave it empty
-        touch "$HOSTS_FILE"
-        echo "Created empty hosts file: $HOSTS_FILE"
+        # Check if files already exist
+        if [ -f "$CONF_FILE" ]; then
+            echo -e "${RED}❌ Error: Configuration for '$SERVICE_NAME' already exists. Exiting.${RESET}"
+            exit 1
+        fi
+
+        # Create hosts file with an interactive loop
+        echo -e "${YELLOW}Enter domains one by one (e.g., example.com). Press [Enter] on an empty line to finish.${RESET}"
+        
+        DOMAIN_LIST=""
+        while read -p "> "; do
+            if [[ -z "$REPLY" ]]; then
+                break
+            fi
+            DOMAIN_LIST+="`echo -e "$SNIPROXY_IP $REPLY\n"`"
+        done
+        
+        if [[ -z "$DOMAIN_LIST" ]]; then
+            echo -e "${RED}❌ No domains entered. Exiting.${RESET}"
+            exit 1
+        fi
+        
+        echo -e "$DOMAIN_LIST" > "$HOSTS_FILE"
+        echo -e "${GREEN}✅ Created hosts file: ${HOSTS_FILE}${RESET}"
 
         # Create the CoreDNS configuration file
         cat <<EOL > "$CONF_FILE"
@@ -74,22 +97,14 @@ ${SERVICE_NAME} {
     errors
 }
 EOL
-        echo "Created CoreDNS config file: $CONF_FILE"
-        echo "---"
-
-        # 4. Tell the user what to do next
-        echo "The hosts file is now ready for you to edit."
-        echo "Please add your domains to the following file:"
-        echo ""
-        echo "    $HOSTS_FILE"
-        echo ""
-        echo "Each line in the file should be in the format:"
-        echo "    193.56.135.102 <domain>"
-        echo ""
-        echo "After you have finished, restart your CoreDNS service to apply the changes."
+        echo -e "${GREEN}✅ Created CoreDNS config file: ${CONF_FILE}${RESET}"
+        echo -e "${YELLOW}---${RESET}"
+        echo -e "${CYAN}Manual configuration for '$SERVICE_NAME' is complete.${RESET}"
+        sudo systemctl restart coredns
+		echo -e "${GREEN}[+] CoreDNS restarted successfully.${RESET}"
         ;;
     *)
-        echo "Invalid choice. Exiting."
+        echo -e "${RED}❌ Invalid choice. Exiting.${RESET}"
         exit 1
         ;;
 esac
