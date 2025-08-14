@@ -6,11 +6,12 @@ YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 RESET='\033[0m'
 
-# Define paths to files and directories to be removed
+# Paths to files and directories
 CONFIG_DIR="/etc/coredns/conf.d"
 COREFILE="/etc/coredns/Corefile"
 SERVICE_FILE="/etc/systemd/system/coredns.service"
 COREDNS_BIN="/usr/local/bin/coredns"
+NGINX_STREAM_DIR="/etc/nginx/stream.d"
 
 function uninstall() {
     clear
@@ -18,26 +19,26 @@ function uninstall() {
 
     # Stop and disable services
     echo -e "${CYAN}Stopping and disabling services...${RESET}"
-    sudo systemctl stop coredns sniproxy
-    sudo systemctl disable coredns sniproxy
+    sudo systemctl stop coredns nginx
+    sudo systemctl disable coredns nginx
 
     # Remove packages
     echo -e "${CYAN}Removing installed packages...${RESET}"
-    sudo apt purge -y sniproxy
+    sudo apt purge -y nginx-extras ufw curl tar
 
-    # Since CoreDNS was installed as a binary, apt purge won't work.
-    # We must remove the binary and systemd service file manually.
+    # Remove CoreDNS binary and systemd service
     echo -e "${CYAN}Removing CoreDNS binary and service file...${RESET}"
     sudo rm -f "$COREDNS_BIN"
     sudo rm -f "$SERVICE_FILE"
 
-    # Remove the created configuration files and directories
-    echo -e "${CYAN}Removing configuration files...${RESET}"
+    # Remove configuration files
+    echo -e "${CYAN}Removing CoreDNS and NGINX configuration files...${RESET}"
     sudo rm -rf "$CONFIG_DIR"
     sudo rm -f "$COREFILE"
+    sudo rm -rf "$NGINX_STREAM_DIR"
 
-    # Remove UFW rules. Using 'ufw delete' is the correct way to remove specific rules.
-    echo -e "${CYAN}Removing UFW rules for DNS, HTTP, and HTTPS...${RESET}"
+    # Remove UFW rules for DNS, HTTP, HTTPS
+    echo -e "${CYAN}Removing UFW rules...${RESET}"
     sudo ufw delete allow 53
     sudo ufw delete allow 80
     sudo ufw delete allow 443
