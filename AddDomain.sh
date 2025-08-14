@@ -52,43 +52,34 @@ case "$CHOICE" in
         
         echo -e "${YELLOW}Automatic script finished.${RESET}"
         ;;
-    "manual")
-        # Handle the 'manual' option
-        echo -e "${YELLOW}---${RESET}"
-        echo -e "${CYAN}Proceeding with manual configuration for '$SERVICE_NAME'.${RESET}"
+"manual")
+    echo -e "${YELLOW}---${RESET}"
+    echo -e "${CYAN}Proceeding with manual configuration for '$SERVICE_NAME'.${RESET}"
 
-        # Define file paths
-        HOSTS_FILE="${HOSTS_DIR}/${SERVICE_NAME}.hosts"
-        CONF_FILE="${CONF_DIR}/${SERVICE_NAME}.conf"
+    # Define file paths
+    HOSTS_FILE="${HOSTS_DIR}/${SERVICE_NAME}.hosts"
+    CONF_FILE="${CONF_DIR}/${SERVICE_NAME}.conf"
 
-        # Check if files already exist
-        if [ -f "$CONF_FILE" ]; then
-            echo -e "${RED}❌ Error: Configuration for '$SERVICE_NAME' already exists. Exiting.${RESET}"
-            exit 1
-        fi
+    if [ -f "$CONF_FILE" ]; then
+        echo -e "${RED}❌ Error: Configuration for '$SERVICE_NAME' already exists. Exiting.${RESET}"
+        exit 1
+    fi
 
-        # Create hosts file with an interactive loop
-        echo -e "${YELLOW}Enter domains one by one (e.g., example.com). Press [Enter] on an empty line to finish.${RESET}"
-        
-        DOMAIN_LIST=""
-        while read -p "> "; do
-            if [[ -z "$REPLY" ]]; then
-                break
-            fi
-            DOMAIN_LIST+="`echo -e "$SNIPROXY_IP $REPLY\n"`"
-        done
-        
-        if [[ -z "$DOMAIN_LIST" ]]; then
-            echo -e "${RED}❌ No domains entered. Exiting.${RESET}"
-            exit 1
-        fi
-        
-        echo -e "$DOMAIN_LIST" > "$HOSTS_FILE"
-        echo -e "${GREEN}✅ Created hosts file: ${HOSTS_FILE}${RESET}"
+    echo -e "${YELLOW}Enter the root domain (e.g., example.com).${RESET}"
+    read -p "> " ROOT_DOMAIN
 
-        # Create the CoreDNS configuration file
-        cat <<EOL > "$CONF_FILE"
-${SERVICE_NAME} {
+    if [[ -z "$ROOT_DOMAIN" ]]; then
+        echo -e "${RED}❌ No domain entered. Exiting.${RESET}"
+        exit 1
+    fi
+
+    echo -e "${YELLOW}Creating hosts file with root + wildcard domain...${RESET}"
+    echo -e "$SNIPROXY_IP $ROOT_DOMAIN\n$SNIPROXY_IP *.$ROOT_DOMAIN" > "$HOSTS_FILE"
+    echo -e "${GREEN}✅ Created hosts file: ${HOSTS_FILE}${RESET}"
+
+    # Create CoreDNS config (root + wildcard in same block)
+    cat <<EOL > "$CONF_FILE"
+${ROOT_DOMAIN}, *.${ROOT_DOMAIN} {
     hosts ${HOSTS_FILE} {
         fallthrough
         ttl 300
@@ -97,12 +88,12 @@ ${SERVICE_NAME} {
     errors
 }
 EOL
-        echo -e "${GREEN}✅ Created CoreDNS config file: ${CONF_FILE}${RESET}"
-        echo -e "${YELLOW}---${RESET}"
-        echo -e "${CYAN}Manual configuration for '$SERVICE_NAME' is complete.${RESET}"
-        sudo systemctl restart coredns
-		echo -e "${GREEN}[+] CoreDNS restarted successfully.${RESET}"
-        ;;
+
+    echo -e "${GREEN}✅ Created CoreDNS config file: ${CONF_FILE}${RESET}"
+    echo -e "${CYAN}Restarting CoreDNS...${RESET}"
+    sudo systemctl restart coredns
+    echo -e "${GREEN}[+] CoreDNS restarted successfully.${RESET}"
+    ;;
     *)
         echo -e "${RED}❌ Invalid choice. Exiting.${RESET}"
         exit 1
