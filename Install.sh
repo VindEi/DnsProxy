@@ -56,24 +56,82 @@ EOF
 function configure_nginx_stream() {
     echo -e "${YELLOW}📝 Configuring NGINX stream for dynamic SNI...${RESET}"
 
-    sudo mkdir -p /etc/nginx/stream.d
-    # Include the stream config from main nginx.conf
-    sudo sed -i '/^stream {/d' /etc/nginx/nginx.conf
-    sudo sed -i '/^}/d' /etc/nginx/nginx.conf
-    echo -e "\nstream {\n    include /etc/nginx/stream.d/*.conf;\n}" | sudo tee -a /etc/nginx/nginx.conf
+    # Overwrite nginx.conf with the provided content
+    sudo tee /etc/nginx/nginx.conf > /dev/null <<'EOF'
+user www-data;
+worker_processes auto;
+pid /run/nginx.pid;
+error_log /var/log/nginx/error.log;
+include /etc/nginx/modules-enabled/*.conf;
 
-    sudo tee /etc/nginx/stream.d/unblocker.conf > /dev/null <<EOF
-resolver 1.1.1.1 8.8.8.8 valid=30s;
+events {
+    worker_connections 768;
+    # multi_accept on;
+}
+
+http {
+
+    ##
+    # Basic Settings
+    ##
+    sendfile on;
+    tcp_nopush on;
+    types_hash_max_size 2048;
+    # server_tokens off;
+
+    # server_names_hash_bucket_size 64;
+    # server_name_in_redirect off;
+
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
+
+    ##
+    # SSL Settings
+    ##
+    ssl_protocols TLSv1 TLSv1.1 TLSv1.2 TLSv1.3; # Dropping SSLv3
+    ssl_prefer_server_ciphers on;
+
+    ##
+    # Logging Settings
+    ##
+    access_log /var/log/nginx/access.log;
+
+    ##
+    # Gzip Settings
+    ##
+    gzip on;
+
+    # gzip_vary on;
+    # gzip_proxied any;
+    # gzip_comp_level 6;
+    # gzip_buffers 16 8k;
+    # gzip_http_version 1.1;
+    # gzip_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss text/javascript;
+
+    ##
+    # Virtual Host Configs
+    ##
+    include /etc/nginx/conf.d/*.conf;
+    include /etc/nginx/sites-enabled/*;
+}
+
+stream {
+    include /etc/nginx/stream.d/*.conf;
+}
+EOF
+
+    sudo mkdir -p /etc/nginx/stream.d
+    
+    # Create the stream config file with the new content and name
+    sudo tee /etc/nginx/stream.d/smartdns.conf > /dev/null <<'EOF'
+resolver 1.1.1.1 8.8.8.8 valid=300s;
+resolver_timeout 5s;
+log_format basic '$remote_addr [$time_local] $ssl_preread_server_name -> $upstream_addr';
+access_log /var/log/nginx/stream_access.log basic;
 
 server {
     listen 443;
-    proxy_pass \$ssl_preread_server_name:443;
-    ssl_preread on;
-}
-
-server {
-    listen 80;
-    proxy_pass \$ssl_preread_server_name:80;
+    proxy_pass $ssl_preread_server_name:443;
     ssl_preread on;
 }
 EOF
