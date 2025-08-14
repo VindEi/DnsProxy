@@ -3,7 +3,7 @@
 # Define variables
 INSTALL_DIR="/usr/local/bin/DnsProxy"
 REPO_URL="https://github.com/VindEi/DnsProxy.git"
-FILES=("DnsProxy" "Install.sh" "Uninstall.sh" "AddDomain.sh")
+FILES=("DnsProxy" "Install.sh" "Uninstall.sh" "AddDomain.sh" "AutoDomain.py")
 
 echo "🌐 Starting DnsProxy auto-install..."
 
