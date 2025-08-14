@@ -25,7 +25,7 @@ function clear_and_header() {
 function service_status() {
     echo -e "${YELLOW}🔍 Service Status:${RESET}"
     systemctl is-active --quiet coredns && echo -e "🟢 CoreDNS: ${GREEN}Running${RESET}" || echo -e "🔴 CoreDNS: ${RED}Stopped${RESET}"
-    pgrep sniproxy &>/dev/null && echo -e "🟢 SNIProxy: ${GREEN}Running${RESET}" || echo -e "🔴 SNIProxy: ${RED}Stopped${RESET}"
+    systemctl is-active --quiet nginx-extras && echo -e "🟢 NGINX-extras: ${GREEN}Running${RESET}" || echo -e "🔴 NGINX-extras: ${RED}Stopped${RESET}"
     echo
 }
 
