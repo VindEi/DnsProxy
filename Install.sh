@@ -25,7 +25,7 @@ function install_CoreDNS() {
 
     sudo mkdir -p "$CONFIG_DIR"
 
-    # CoreDNS runs on default Port 53 directly
+    # CoreDNS runs directly on public Port 53
     echo -e "${YELLOW}📝 Writing Corefile...${RESET}"
     sudo tee "$COREFILE" > /dev/null <<EOF
 import conf.d/*.conf
@@ -57,7 +57,6 @@ EOF
 function configure_nginx() {
     echo -e "${YELLOW}📝 Writing main Nginx Configuration...${RESET}"
 
-    # Overwrite nginx.conf with correct streams enabled
     sudo tee /etc/nginx/nginx.conf > /dev/null <<'EOF'
 user www-data;
 worker_processes auto;
@@ -95,7 +94,7 @@ EOF
     sudo mkdir -p /etc/nginx/stream.d
     sudo mkdir -p /etc/nginx/conf.d
     
-    # 1. Configured generic HTTP Proxy on Port 80
+    # Generic HTTP Proxy on Port 80
     echo -e "${YELLOW}📝 Configuring Port 80 HTTP Proxy...${RESET}"
     sudo tee /etc/nginx/conf.d/http_proxy.conf > /dev/null <<'EOF'
 server {
@@ -110,31 +109,17 @@ server {
 }
 EOF
 
-    # 2. Configured Port 443 Stream multiplexer (VPN on 4443 and Proxy on default fallback)
-    echo -e "${YELLOW}📝 Configuring Port 443 Stream multiplexer...${RESET}"
+    # Generic Port 443 Stream Proxy (Zero VPN/VLESS/Reality configuration)
+    echo -e "${YELLOW}📝 Configuring Port 443 Stream Proxy...${RESET}"
     sudo tee /etc/nginx/stream.d/smartdns.conf > /dev/null <<'EOF'
 resolver 1.1.1.1 8.8.8.8 valid=300s;
 resolver_timeout 5s;
 log_format basic '$remote_addr [$time_local] $ssl_preread_server_name -> $upstream_addr';
 access_log /var/log/nginx/stream_access.log basic;
 
-map $ssl_preread_server_name $backend {
-    hostnames;
-
-    # Protect against empty SNI probes
-    ""                    127.0.0.1:9999;
-
-    # Helsinki Reality SNIs route internally to local Xray
-    www.helsinki.fi      127.0.0.1:4443;
-    helsinki.fi          127.0.0.1:4443;
-    
-    # All other traffic routes dynamically to target domain
-    default               $ssl_preread_server_name:443;
-}
-
 server {
     listen 443;
-    proxy_pass $backend;
+    proxy_pass $ssl_preread_server_name:443;
     ssl_preread on;
 }
 EOF
@@ -156,7 +141,7 @@ function install_Service() {
     sudo ufw allow ssh comment 'SSH'
     sudo ufw allow 53 comment 'DNS (UDP/TCP)'
     sudo ufw allow 80 comment 'HTTP'
-    sudo ufw allow 443 comment 'HTTPS (Shared)'
+    sudo ufw allow 443 comment 'HTTPS'
     sudo ufw --force enable
 
     echo -e "${YELLOW}🔄 Enabling services...${RESET}"
