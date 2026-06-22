@@ -25,6 +25,7 @@ function install_CoreDNS() {
 
     sudo mkdir -p "$CONFIG_DIR"
 
+    # CoreDNS runs on default Port 53 directly
     echo -e "${YELLOW}📝 Writing Corefile...${RESET}"
     sudo tee "$COREFILE" > /dev/null <<EOF
 import conf.d/*.conf
@@ -53,10 +54,10 @@ EOF
     echo -e "${GREEN}✅ CoreDNS installed.${RESET}"
 }
 
-function configure_nginx_stream() {
-    echo -e "${YELLOW}📝 Configuring NGINX stream for dynamic SNI...${RESET}"
+function configure_nginx() {
+    echo -e "${YELLOW}📝 Writing main Nginx Configuration...${RESET}"
 
-    # Overwrite nginx.conf with the provided content
+    # Overwrite nginx.conf with correct streams enabled
     sudo tee /etc/nginx/nginx.conf > /dev/null <<'EOF'
 user www-data;
 worker_processes auto;
@@ -66,51 +67,22 @@ include /etc/nginx/modules-enabled/*.conf;
 
 events {
     worker_connections 768;
-    # multi_accept on;
 }
 
 http {
-
-    ##
-    # Basic Settings
-    ##
     sendfile on;
     tcp_nopush on;
     types_hash_max_size 2048;
-    # server_tokens off;
-
-    # server_names_hash_bucket_size 64;
-    # server_name_in_redirect off;
 
     include /etc/nginx/mime.types;
     default_type application/octet-stream;
 
-    ##
-    # SSL Settings
-    ##
-    ssl_protocols TLSv1 TLSv1.1 TLSv1.2 TLSv1.3; # Dropping SSLv3
+    ssl_protocols TLSv1 TLSv1.1 TLSv1.2 TLSv1.3;
     ssl_prefer_server_ciphers on;
 
-    ##
-    # Logging Settings
-    ##
     access_log /var/log/nginx/access.log;
-
-    ##
-    # Gzip Settings
-    ##
     gzip on;
 
-    # gzip_vary on;
-    # gzip_proxied any;
-    # gzip_comp_level 6;
-    # gzip_buffers 16 8k;
-    # gzip_http_version 1.1;
-    # gzip_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss text/javascript;
-
-    ##
-    # Virtual Host Configs
-    ##
     include /etc/nginx/conf.d/*.conf;
     include /etc/nginx/sites-enabled/*;
 }
@@ -121,23 +93,54 @@ stream {
 EOF
 
     sudo mkdir -p /etc/nginx/stream.d
+    sudo mkdir -p /etc/nginx/conf.d
     
-    # Create the stream config file with the new content and name
+    # 1. Configured generic HTTP Proxy on Port 80
+    echo -e "${YELLOW}📝 Configuring Port 80 HTTP Proxy...${RESET}"
+    sudo tee /etc/nginx/conf.d/http_proxy.conf > /dev/null <<'EOF'
+server {
+    listen 80;
+    resolver 1.1.1.1 8.8.8.8 valid=300s;
+    resolver_timeout 5s;
+    
+    location / {
+        proxy_pass http://$http_host;
+        proxy_set_header Host $http_host;
+    }
+}
+EOF
+
+    # 2. Configured Port 443 Stream multiplexer (VPN on 4443 and Proxy on default fallback)
+    echo -e "${YELLOW}📝 Configuring Port 443 Stream multiplexer...${RESET}"
     sudo tee /etc/nginx/stream.d/smartdns.conf > /dev/null <<'EOF'
 resolver 1.1.1.1 8.8.8.8 valid=300s;
 resolver_timeout 5s;
 log_format basic '$remote_addr [$time_local] $ssl_preread_server_name -> $upstream_addr';
 access_log /var/log/nginx/stream_access.log basic;
 
+map $ssl_preread_server_name $backend {
+    hostnames;
+
+    # Protect against empty SNI probes
+    ""                    127.0.0.1:9999;
+
+    # Helsinki Reality SNIs route internally to local Xray
+    www.helsinki.fi      127.0.0.1:4443;
+    helsinki.fi          127.0.0.1:4443;
+    
+    # All other traffic routes dynamically to target domain
+    default               $ssl_preread_server_name:443;
+}
+
 server {
     listen 443;
-    proxy_pass $ssl_preread_server_name:443;
+    proxy_pass $backend;
     ssl_preread on;
 }
 EOF
 
     sudo nginx -t && sudo systemctl restart nginx
-    echo -e "${GREEN}✅ NGINX stream ready.${RESET}"
+    echo -e "${GREEN}✅ NGINX stream and HTTP proxy configurations complete.${RESET}"
 }
 
 function install_Service() {
@@ -147,13 +150,13 @@ function install_Service() {
     sudo apt install -y nginx-extras ufw curl tar
 
     install_CoreDNS || return 1
-    configure_nginx_stream
+    configure_nginx
 
     echo -e "${YELLOW}🔐 Configuring UFW...${RESET}"
     sudo ufw allow ssh comment 'SSH'
-    sudo ufw allow 53 comment 'DNS'
+    sudo ufw allow 53 comment 'DNS (UDP/TCP)'
     sudo ufw allow 80 comment 'HTTP'
-    sudo ufw allow 443 comment 'HTTPS'
+    sudo ufw allow 443 comment 'HTTPS (Shared)'
     sudo ufw --force enable
 
     echo -e "${YELLOW}🔄 Enabling services...${RESET}"
@@ -161,7 +164,7 @@ function install_Service() {
     sudo systemctl enable --now coredns
     sudo systemctl enable --now nginx
 
-    echo -e "${GREEN}✅ CoreDNS + NGINX (SNI stream) installed successfully.${RESET}"
+    echo -e "${GREEN}✅ Installation successfully completed.${RESET}"
     read -p "Press enter to return..."
 }
 

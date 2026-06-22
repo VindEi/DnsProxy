@@ -6,7 +6,6 @@ YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 RESET='\033[0m'
 
-# Paths to files and directories
 CONFIG_DIR="/etc/coredns/conf.d"
 COREFILE="/etc/coredns/Corefile"
 SERVICE_FILE="/etc/systemd/system/coredns.service"
@@ -22,9 +21,9 @@ function uninstall() {
     sudo systemctl stop coredns nginx
     sudo systemctl disable coredns nginx
 
-    # Remove packages
+    # Resolved safe uninstall bug: Only purge manually installed packages
     echo -e "${CYAN}Removing installed packages...${RESET}"
-    sudo apt purge -y nginx-extras ufw curl tar
+    sudo apt purge -y nginx-extras ufw
 
     # Remove CoreDNS binary and systemd service
     echo -e "${CYAN}Removing CoreDNS binary and service file...${RESET}"
@@ -36,6 +35,7 @@ function uninstall() {
     sudo rm -rf "$CONFIG_DIR"
     sudo rm -f "$COREFILE"
     sudo rm -rf "$NGINX_STREAM_DIR"
+    sudo rm -f /etc/nginx/conf.d/http_proxy.conf
 
     # Remove UFW rules for DNS, HTTP, HTTPS
     echo -e "${CYAN}Removing UFW rules...${RESET}"

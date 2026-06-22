@@ -29,7 +29,6 @@ function service_status() {
     echo
 }
 
-
 function main_menu() {
     while true; do
         clear_and_header
@@ -57,7 +56,7 @@ function domains_menu() {
         echo -e "1) 📃 List current domains"
         echo -e "2) ➕ Add a new service"
         echo -e "3) 🗑️  Remove an existing service"
-        echo -e "4) 📝 View a service's host file"
+        echo -e "4) 📃 View service configurations"
         echo -e "5) 🔙 Back${RESET}"
         echo
         read -p "Choose an option: " dom_choice
@@ -77,7 +76,6 @@ function domains_menu() {
                 echo
                 read -p "Press enter to return..." ;;
             2)
-                # Corrected logic to add a new service
                 echo -ne "${YELLOW}Enter the service name to add (e.g., spotify, gemini): ${RESET}"
                 read service_name
                 echo -e "---"
@@ -92,11 +90,9 @@ function domains_menu() {
                     *) echo -e "${RED}Invalid choice. Returning to menu.${RESET}"; sleep 2; continue ;;
                 esac
 
-                # Pass both variables to the AddDomain.sh script
                 "$BASE_DIR/AddDomain.sh" "$service_name" "$method"
                 read -p "Press enter to return..." ;;
             3)
-                # Corrected logic to remove a service
                 echo -ne "${YELLOW}Enter the service name to remove (e.g., gemini, spotify): ${RESET}"
                 read service_name
                 local conf_file="$CONFIG_DIR/$service_name.conf"
@@ -112,17 +108,22 @@ function domains_menu() {
                 fi
                 read -p "Press enter to return..." ;;
             4)
-                # Option to view the contents of a hosts file
+                # Usability fix: Checks if hosts file exists; otherwise shows the main coredns .conf file
                 echo -ne "${YELLOW}Enter the service name to view (e.g., gemini, spotify): ${RESET}"
                 read service_name
+                local conf_file="$CONFIG_DIR/$service_name.conf"
                 local hosts_file="$HOSTS_DIR/$service_name.hosts"
 
                 if [ -f "$hosts_file" ]; then
                     echo -e "${CYAN}--- Contents of $hosts_file ---${RESET}"
                     cat "$hosts_file"
                     echo -e "${CYAN}-------------------------------${RESET}"
+                elif [ -f "$conf_file" ]; then
+                    echo -e "${CYAN}--- Contents of $conf_file (Manual Mode) ---${RESET}"
+                    cat "$conf_file"
+                    echo -e "${CYAN}-------------------------------${RESET}"
                 else
-                    echo -e "${RED}❌ Hosts file not found for '$service_name'.${RESET}"
+                    echo -e "${RED}❌ No configuration or hosts file found for '$service_name'.${RESET}"
                 fi
                 read -p "Press enter to return..." ;;
             5) return ;;
