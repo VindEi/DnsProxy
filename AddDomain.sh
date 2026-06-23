@@ -158,7 +158,7 @@ case "$CHOICE" in
                 fi
             fi
 
-            local root
+            # Bug resolved: Removed 'local' attribute from loop variable inside the main body
             root=$(echo "$domain" | awk -F. '{if (NF>=2) print $(NF-1)"."$NF; else print $0}')
             echo "$root" >> "$ROOTS_TEMP"
         done < "$DOMAINS_TEMP.sorted"
@@ -187,7 +187,7 @@ case "$CHOICE" in
             domain_count=$(wc -l < "$HOSTS_FILE")
         fi
 
-        # Write clean, multi-zone CoreDNS server block config (under token limit)
+        # Write clean, comma-free CoreDNS server block config (under token limit)
         cat <<EOL > "$CONF_FILE"
 ${zones_string} {
     hosts ${HOSTS_FILE} {
