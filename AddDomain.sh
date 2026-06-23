@@ -34,13 +34,24 @@ mkdir -p "$HOSTS_DIR"
 # Temporary files for automatic scraper tracking
 DOMAINS_TEMP=$(mktemp)
 VISITED_TEMP=$(mktemp)
+ROOTS_TEMP=$(mktemp)
 
 # Clean up temp files on exit
-trap 'rm -f "$DOMAINS_TEMP" "$VISITED_TEMP"' EXIT
+trap 'rm -f "$DOMAINS_TEMP" "$VISITED_TEMP" "$ROOTS_TEMP"' EXIT
 
-# --- Recursive V2Fly Scraper in Pure Bash (No Presets) ---
+# --- Recursive V2Fly Scraper in Pure Bash ---
 fetch_v2fly_domains() {
-    local mapped_name="$1"
+    local sname="$1"
+    local mapped_name="$sname"
+
+    # Match service name translations dynamically
+    if [ "$sname" = "gemini" ]; then
+        mapped_name="google-gemini"
+    elif [ "$sname" = "deepmind" ]; then
+        mapped_name="google-deepmind"
+    elif [ "$sname" = "riotgames" ]; then
+        mapped_name="riot"
+    fi
 
     # Avoid infinite loops during circular include imports
     if grep -Fxq "$mapped_name" "$VISITED_TEMP" 2>/dev/null; then
@@ -135,15 +146,30 @@ case "$CHOICE" in
         # Sort, remove duplicate domains, and strip any leading dots
         sort -u "$DOMAINS_TEMP" | sed 's/^\.//' > "$DOMAINS_TEMP.sorted"
 
-        # Join the exact domains into a single space-separated string (no commas, no wildcards in header)
-        zones_string=$(tr '\n' ' ' < "$DOMAINS_TEMP.sorted" | xargs)
+        # Extract unique parent root domains (keeps the server block header tiny)
+        while IFS= read -r domain || [ -n "$domain" ]; do
+            [[ -z "$domain" ]] && continue
+            
+            # Optimization: Filter out regional Google TLDs (e.g. google.fr, google.it)
+            # We only keep Google domains ending in .com, .cn, .dev, .org, or .net
+            if [[ "$domain" =~ google\.[a-z]{2,3}$ || "$domain" =~ google\.co\.[a-z]{2}$ || "$domain" =~ google\.com\.[a-z]{2}$ ]]; then
+                if [[ ! "$domain" =~ \.com$ && ! "$domain" =~ \.cn$ && ! "$domain" =~ \.dev$ && ! "$domain" =~ \.org$ && ! "$domain" =~ \.net$ ]]; then
+                    continue
+                fi
+            fi
+
+            root=$(echo "$domain" | awk -F. '{if (NF>=2) print $(NF-1)"."$NF; else print $0}')
+            echo "$root" >> "$ROOTS_TEMP"
+        done < "$DOMAINS_TEMP.sorted"
+        
+        sort -u "$ROOTS_TEMP" > "$ROOTS_TEMP.unique"
 
         # Write clean hosts database file containing all discovered domains
         echo -e "${SNIPROXY_IP} ${primary_domain}\n${SNIPROXY_IP} *.${primary_domain}" > "$HOSTS_FILE"
         while IFS= read -r domain; do
             [[ -z "$domain" || "$domain" = "$primary_domain" ]] && continue
             
-            # Apply Google TLD filter to the hosts file (skips regional google TLDs like google.fr)
+            # Apply same Google TLD filter to the hosts file
             if [[ "$domain" =~ google\.[a-z]{2,3}$ || "$domain" =~ google\.co\.[a-z]{2}$ || "$domain" =~ google\.com\.[a-z]{2}$ ]]; then
                 if [[ ! "$domain" =~ \.com$ && ! "$domain" =~ \.cn$ && ! "$domain" =~ \.dev$ && ! "$domain" =~ \.org$ && ! "$domain" =~ \.net$ ]]; then
                     continue
@@ -159,9 +185,27 @@ case "$CHOICE" in
             domain_count=$(wc -l < "$HOSTS_FILE")
         fi
 
-        # Write clean, single-block CoreDNS config using exact domains in the header (no commas, no wildcards)
-        cat <<EOL > "$CONF_FILE"
-${zones_string} {
+        # Write separate, clean, comma-free server blocks for each parent root domain
+        # Checks for and skips any duplicate zones already claimed by other config files!
+        true > "$CONF_FILE" # Clear any existing file
+        while IFS= read -r root_zone || [ -n "$root_zone" ]; do
+            [[ -z "$root_zone" ]] && continue
+            
+            # Live Duplicate Scanner: Prevents duplicate zone crashes
+            duplicate_found=0
+            if ls "$CONF_DIR"/*.conf &>/dev/null; then
+                if grep -rn "^${root_zone} {" "$CONF_DIR"/*.conf &>/dev/null; then
+                    duplicate_found=1
+                fi
+            fi
+            
+            if [ "$duplicate_found" -eq 1 ]; then
+                echo -e "${YELLOW}⚠️  Overlapping zone '${root_zone}' already defined in another service. Skipping block.${RESET}"
+                continue
+            fi
+
+            cat <<EOL >> "$CONF_FILE"
+${root_zone} {
     hosts ${HOSTS_FILE} {
         fallthrough
         ttl 300
@@ -171,6 +215,7 @@ ${zones_string} {
     errors
 }
 EOL
+        done < "$ROOTS_TEMP.unique"
 
         echo -e "${GREEN}✅ Successfully parsed and added ${domain_count} domains to: ${HOSTS_FILE}${RESET}"
         echo -e "${GREEN}✅ Created CoreDNS config file: ${CONF_FILE}${RESET}"

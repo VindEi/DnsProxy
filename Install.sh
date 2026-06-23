@@ -24,9 +24,13 @@ function install_CoreDNS() {
         return 1
     fi
 
+    # Create config directories
     sudo mkdir -p "$CONFIG_DIR"
+
+    # Write placeholder so Corefile glob doesn't warning-loop on first boot
     sudo touch "${CONFIG_DIR}/.placeholder.conf"
 
+    # CoreDNS runs on default Port 53 directly
     echo -e "${YELLOW}📝 Writing Corefile...${RESET}"
     sudo tee "$COREFILE" > /dev/null <<EOF
 import conf.d/*.conf
@@ -111,11 +115,6 @@ EOF
 
     echo -e "${YELLOW}📝 Configuring Port 443 Stream Proxy...${RESET}"
     sudo tee /etc/nginx/stream.d/smartdns.conf > /dev/null <<'EOF'
-resolver 1.1.1.1 8.8.8.8 valid=300s;
-resolver_timeout 5s;
-log_format basic '$remote_addr [$time_local] $ssl_preread_server_name -> $upstream_addr';
-access_log /var/log/nginx/stream_access.log basic;
-
 server {
     listen 443;
     proxy_pass $ssl_preread_server_name:443;
