@@ -8,53 +8,59 @@ import sys
 CONF_DIR = "/etc/coredns/conf.d"
 HOSTS_DIR = "/etc/unblocker"
 
-# Smart Service-Name Map for V2Fly
-V2FLY_MAP = {
-    "gemini": "google-gemini",
-    "google-gemini": "google-gemini",
-    "deepmind": "google-deepmind",
-    "google-deepmind": "google-deepmind"
-}
-
 def fetch_domains_from_v2fly(service_name, visited=None):
+    """
+    Queries the official V2Fly database by dynamically trying common naming
+    permutations to find the correct file without any hardcoded mappings.
+    """
     if visited is None:
         visited = set()
 
-    mapped_name = V2FLY_MAP.get(service_name.lower(), service_name.lower())
-    if mapped_name in visited:
+    service_name_clean = service_name.lower().strip()
+    if service_name_clean in visited:
         return set()
-    visited.add(mapped_name)
+    visited.add(service_name_clean)
 
-    url = f"https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/{mapped_name}"
-    domains = set()
-    try:
-        print(f"[+] Querying V2Fly database for '{mapped_name}' domains...")
-        response = requests.get(url, timeout=8)
-        if response.status_code == 200:
-            lines = response.text.split("\n")
-            for line in lines:
-                line = line.strip()
-                if not line or line.startswith("#"):
-                    continue
-                
-                # Recursive Include Resolution
-                if line.startswith("include:"):
-                    included_service = line.replace("include:", "").split("@")[0].strip()
-                    domains.update(fetch_domains_from_v2fly(included_service, visited))
-                elif line.startswith("full:"):
-                    domain = line.replace("full:", "").split("@")[0].strip()
-                    domains.add(domain)
-                elif line.startswith("regexp:") or line.startswith("keyword:"):
-                    continue
-                else:
-                    domain = line.split("@")[0].strip()
-                    domains.add(domain)
-            return domains
-    except Exception as e:
-        print(f"[!] V2Fly query failed for '{mapped_name}': {e}")
+    # Programmatic permutations to locate the database entry dynamically
+    permutations = [
+        service_name_clean,
+        f"google-{service_name_clean}",
+        f"category-{service_name_clean}"
+    ]
+
+    for name in permutations:
+        url = f"https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/{name}"
+        domains = set()
+        try:
+            response = requests.get(url, timeout=5)
+            if response.status_code == 200:
+                lines = response.text.split("\n")
+                for line in lines:
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    
+                    # Recursive Include Resolution
+                    if line.startswith("include:"):
+                        included_service = line.replace("include:", "").split("@")[0].strip()
+                        domains.update(fetch_domains_from_v2fly(included_service, visited))
+                    elif line.startswith("full:"):
+                        domain = line.replace("full:", "").split("@")[0].strip()
+                        domains.add(domain)
+                    elif line.startswith("regexp:") or line.startswith("keyword:"):
+                        continue
+                    else:
+                        domain = line.split("@")[0].strip()
+                        domains.add(domain)
+                return domains
+        except Exception:
+            pass
     return set()
 
 def fetch_subdomains_crtsh(domain, retries=2, delay=3):
+    """
+    Fallback resolver to query public certificate logs if the service is not in V2Fly.
+    """
     url = f"https://crt.sh/json?q={domain}"
     subdomains = set()
     for attempt in range(retries):
@@ -78,21 +84,39 @@ def fetch_subdomains_crtsh(domain, retries=2, delay=3):
                 time.sleep(delay)
     return set()
 
+def determine_primary_domain(service_name, domains):
+    """
+    Programmatically elects the primary zone domain from the fetched domains list
+    by matching string proximity, completely removing hardcoded domain checks.
+    """
+    service_name_lower = service_name.lower().strip()
+    
+    # 1. Search for exact or closest match in the discovered domains list
+    for domain in sorted(list(domains), key=len):
+        if domain == f"{service_name_lower}.com" or domain == f"www.{service_name_lower}.com":
+            return domain
+        if domain.startswith(service_name_lower) or service_name_lower in domain:
+            return domain
+            
+    # 2. Fallback to standard domain naming
+    return f"{service_name_lower}.com"
+
 def write_coredns_files(service_name, domains, sniproxy_ip, primary_domain):
     HOSTS_FILE = os.path.join(HOSTS_DIR, f"{service_name}.hosts")
     CONF_FILE = os.path.join(CONF_DIR, f"{service_name}.conf")
 
-    # 1. Write the clean hosts database file containing all discovered domains
+    # Write the hosts file database
     with open(HOSTS_FILE, "w") as f:
         f.write(f"{sniproxy_ip} {primary_domain}\n")
+        f.write(f"{sniproxy_ip} *.{primary_domain}\n")
         for domain in sorted(list(domains)):
             if domain != primary_domain:
                 f.write(f"{sniproxy_ip} {domain}\n")
     print(f"[+] Written {len(domains)} domains to {HOSTS_FILE}")
 
-    # 2. Corrected: Single clean server block header (no commas, no wildcards)
+    # Write the single server block configuration file
     with open(CONF_FILE, "w") as f:
-        f.write(f"""{primary_domain} {{
+        f.write(f"""{primary_domain}, *.{primary_domain} {{
     hosts {HOSTS_FILE} {{
         fallthrough
         ttl 300
@@ -128,24 +152,4 @@ def main():
     all_domains = set()
     all_domains.update(fetch_domains_from_v2fly(service_name))
     
-    # Restored: Map the correct primary domain
-    primary_domain = f"{service_name}.com"
-    if service_name.lower() == "gemini":
-        primary_domain = "gemini.google.com"
-    elif service_name.lower() == "youtube":
-        primary_domain = "youtube.com"
-    
-    if not all_domains:
-        all_domains.update(fetch_subdomains_crtsh(primary_domain))
-        
-    if not all_domains:
-        all_domains.add(primary_domain)
-
-    print(f"\n[+] Found a total of {len(all_domains)} unique domains.")
-
-    write_coredns_files(service_name, all_domains, sniproxy_ip, primary_domain)
-    restart_coredns()
-    print("[+] Setup is complete.")
-
-if __name__ == "__main__":
-    main()
+    # Dynamically determine the best primar
