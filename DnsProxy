@@ -24,27 +24,83 @@ function clear_and_header() {
 
 function service_status() {
     echo -e "${YELLOW}🔍 Service Status:${RESET}"
+    
+    # Check if services are active
     systemctl is-active --quiet coredns && echo -e "🟢 CoreDNS: ${GREEN}Running${RESET}" || echo -e "🔴 CoreDNS: ${RED}Stopped${RESET}"
     systemctl is-active --quiet nginx && echo -e "🟢 NGINX: ${GREEN}Running${RESET}" || echo -e "🔴 NGINX: ${RED}Stopped${RESET}"
+    
+    # Dynamic active services counter
+    local count=0
+    if [ -d "$CONFIG_DIR" ]; then
+        for file in "$CONFIG_DIR"/*.conf; do
+            if [ -e "$file" ]; then
+                ((count++))
+            fi
+        done
+    fi
+    echo -e "📂 Active Services: ${CYAN}${count}${RESET}"
     echo
+}
+
+function manage_installation() {
+    # Check if CoreDNS binary exists to determine installation status
+    if [ -f "/usr/local/bin/coredns" ]; then
+        # 1. Confirmation Gate for Uninstallation
+        echo -e "${RED}⚠️  WARNING: You are about to UNINSTALL DnsProxy.${RESET}"
+        echo -e "${RED}This will remove CoreDNS, Nginx configurations, and delete all your unblocked domain lists.${RESET}"
+        echo
+        read -p "Are you sure you want to proceed with uninstallation? (y/N): " confirm
+        if [[ "$confirm" =~ ^[Yy]$ ]]; then
+            "$BASE_DIR/Uninstall.sh"
+        else
+            echo -e "\n${YELLOW}Uninstallation cancelled.${RESET}"
+            sleep 1.5
+        fi
+    else
+        # 2. Confirmation Gate for Installation
+        echo -e "${GREEN}📥 You are about to INSTALL DnsProxy.${RESET}"
+        echo -e "${GREEN}This will install CoreDNS, Nginx stream routing, and setup standard firewall rules.${RESET}"
+        echo
+        read -p "Are you sure you want to proceed with installation? (y/N): " confirm
+        if [[ "$confirm" =~ ^[Yy]$ ]]; then
+            "$BASE_DIR/Install.sh"
+        else
+            echo -e "\n${YELLOW}Installation cancelled.${RESET}"
+            sleep 1.5
+        fi
+    fi
 }
 
 function main_menu() {
     while true; do
         clear_and_header
         service_status
-        echo -e "${YELLOW}1) 📥 Install"
-        echo -e "2) ❌ Uninstall"
-        echo -e "3) 📂 Domains"
-        echo -e "4) 🚪 Exit${RESET}"
+        
+        # Dynamically display Install or Uninstall depending on server state
+        if [ -f "/usr/local/bin/coredns" ]; then
+            echo -e "${YELLOW}1) ❌ Uninstall DnsProxy"
+        else
+            echo -e "${YELLOW}1) 📥 Install DnsProxy"
+        fi
+        
+        echo -e "2) 📂 Domains Menu"
+        echo -e "3) 🚪 Exit${RESET}"
         echo
         read -p "Choose an option: " choice
         case "$choice" in
-            1) "$BASE_DIR/Install.sh" ;;
-            2) "$BASE_DIR/Uninstall.sh" ;;
-            3) domains_menu ;;
-            4) exit 0 ;;
-            *) echo -e "${RED}Invalid option.${RESET}"; sleep 1 ;;
+            1) 
+                manage_installation 
+                ;;
+            2) 
+                domains_menu 
+                ;;
+            3) 
+                exit 0 
+                ;;
+            *) 
+                echo -e "${RED}Invalid option.${RESET}"
+                sleep 1 
+                ;;
         esac
     done
 }
@@ -108,7 +164,6 @@ function domains_menu() {
                 fi
                 read -p "Press enter to return..." ;;
             4)
-                # Usability fix: Checks if hosts file exists; otherwise shows the main coredns .conf file
                 echo -ne "${YELLOW}Enter the service name to view (e.g., gemini, spotify): ${RESET}"
                 read service_name
                 local conf_file="$CONFIG_DIR/$service_name.conf"
