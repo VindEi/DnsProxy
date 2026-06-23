@@ -152,7 +152,6 @@ case "$CHOICE" in
             if [[ "$domain" =~ \.co\.[a-z]{2}$ || "$domain" =~ \.com\.[a-z]{2}$ || "$domain" =~ \.org\.[a-z]{2}$ || "$domain" =~ \.net\.[a-z]{2}$ ]]; then
                 root=$(echo "$domain" | awk -F. '{if (NF>=3) print $(NF-2)"."$(NF-1)"."$NF; else print $0}')
             else
-                # Resolved: Removed the duplicated $(NF-1) typo
                 root=$(echo "$domain" | awk -F. '{if (NF>=2) print $(NF-1)"."$NF; else print $0}')
             fi
             echo "$root" >> "$ROOTS_TEMP"
@@ -182,11 +181,15 @@ case "$CHOICE" in
         fi
 
         # Write separate, clean, comma-free server blocks for each parent root domain
-        # Checks for and skips any duplicate zones already claimed by other config files!
         true > "$CONF_FILE" # Clear any existing file
         while IFS= read -r root_zone || [ -n "$root_zone" ]; do
             [[ -z "$root_zone" ]] && continue
             
+            # Skip any invalid TLD zones (must contain at least one dot to be a valid server block)
+            if [[ ! "$root_zone" =~ \. ]]; then
+                continue
+            fi
+
             # Live Duplicate Scanner: Prevents duplicate zone crashes
             duplicate_found=0
             if ls "$CONF_DIR"/*.conf &>/dev/null; then
