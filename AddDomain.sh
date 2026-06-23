@@ -76,7 +76,7 @@ case "$CHOICE" in
         # Escape dots for rewrite regex (e.g. example.com -> example\.com)
         ESCAPED_DOMAIN=$(echo "$ROOT_DOMAIN" | sed 's/\./\\./g')
 
-        # Corrected: Single clean server block header (no conflicting wildcards)
+        # Corrected: Clean, single-domain server block header (no commas, no wildcards)
         cat <<EOL > "$CONF_FILE"
 ${ROOT_DOMAIN} {
     rewrite stop {
