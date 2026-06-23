@@ -39,7 +39,7 @@ ROOTS_TEMP=$(mktemp)
 # Clean up temp files on exit
 trap 'rm -f "$DOMAINS_TEMP" "$VISITED_TEMP" "$ROOTS_TEMP"' EXIT
 
-# --- Recursive V2Fly Scraper in Pure Bash ---
+# --- Recursive V2Fly Scraper in Pure Bash (No Presets) ---
 fetch_v2fly_domains() {
     local mapped_name="$1"
 
@@ -152,6 +152,7 @@ case "$CHOICE" in
             if [[ "$domain" =~ \.co\.[a-z]{2}$ || "$domain" =~ \.com\.[a-z]{2}$ || "$domain" =~ \.org\.[a-z]{2}$ || "$domain" =~ \.net\.[a-z]{2}$ ]]; then
                 root=$(echo "$domain" | awk -F. '{if (NF>=3) print $(NF-2)"."$(NF-1)"."$NF; else print $0}')
             else
+                # Resolved: Removed the duplicated $(NF-1) typo
                 root=$(echo "$domain" | awk -F. '{if (NF>=2) print $(NF-1)"."$NF; else print $0}')
             fi
             echo "$root" >> "$ROOTS_TEMP"
