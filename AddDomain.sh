@@ -69,10 +69,11 @@ fetch_v2fly_domains() {
 
     # Parse lines recursively
     while IFS= read -r line || [ -n "$line" ]; do
-        # Trim whitespace
-        line=$(echo "$line" | xargs)
-        # Skip empty lines and comments
-        [[ -z "$line" || "$line" =~ ^# ]] && continue
+        # Bug resolved: Strip inline comments first (e.g. "domain.com # comment" -> "domain.com")
+        line=$(echo "$line" | cut -d'#' -f1 | xargs)
+        
+        # Skip empty lines
+        [[ -z "$line" ]] && continue
 
         if [[ "$line" =~ ^include: ]]; then
             local inc_service
@@ -148,7 +149,7 @@ case "$CHOICE" in
                 fi
             fi
 
-            # Public Suffix Detector: If the domain ends with .co.xx, .com.xx, etc., take the last 3 parts
+            # Robust root extraction
             if [[ "$domain" =~ \.co\.[a-z]{2}$ || "$domain" =~ \.com\.[a-z]{2}$ || "$domain" =~ \.org\.[a-z]{2}$ || "$domain" =~ \.net\.[a-z]{2}$ ]]; then
                 root=$(echo "$domain" | awk -F. '{if (NF>=3) print $(NF-2)"."$(NF-1)"."$NF; else print $0}')
             else
@@ -181,6 +182,7 @@ case "$CHOICE" in
         fi
 
         # Write separate, clean, comma-free server blocks for each parent root domain
+        # Checks for and skips any duplicate zones already claimed by other config files!
         true > "$CONF_FILE" # Clear any existing file
         while IFS= read -r root_zone || [ -n "$root_zone" ]; do
             [[ -z "$root_zone" ]] && continue
