@@ -6,6 +6,7 @@ import sys
 
 # --- Script Configuration ---
 CONF_DIR = "/etc/coredns/conf.d"
+HOSTS_DIR = "/etc/unblocker"
 
 # Smart Service-Name Map for V2Fly
 V2FLY_MAP = {
@@ -48,7 +49,6 @@ def fetch_domains_from_v2fly(service_name, visited=None):
                 else:
                     domain = line.split("@")[0].strip()
                     domains.add(domain)
-            print(f"[+] Successfully fetched {len(domains)} domains from v2fly.")
             return domains
     except Exception as e:
         print(f"[!] V2Fly query failed for '{mapped_name}': {e}")
@@ -78,52 +78,32 @@ def fetch_subdomains_crtsh(domain, retries=2, delay=3):
                 time.sleep(delay)
     return set()
 
-def get_root_domains(domains):
-    """
-    Extracts the unique root domains (e.g. api.spotify.com -> spotify.com)
-    to keep the Corefile server blocks minimized and extremely fast.
-    """
-    roots = set()
-    for domain in domains:
-        parts = domain.lower().split('.')
-        if len(parts) >= 2:
-            root = ".".join(parts[-2:])
-            roots.add(root)
-        else:
-            roots.add(domain)
-    return roots
-
-def write_coredns_files(service_name, domains, sniproxy_ip):
+def write_coredns_files(service_name, domains, sniproxy_ip, primary_domain):
+    HOSTS_FILE = os.path.join(HOSTS_DIR, f"{service_name}.hosts")
     CONF_FILE = os.path.join(CONF_DIR, f"{service_name}.conf")
 
-    # 1. Extract the parent root domains (keeps header small and clean)
-    root_domains = get_root_domains(domains)
-    root_zones_string = " ".join(sorted(list(root_domains)))
+    # 1. Write the clean hosts database file containing all discovered domains
+    with open(HOSTS_FILE, "w") as f:
+        # Include root and wildcard for the primary domain as well
+        f.write(f"{sniproxy_ip} {primary_domain}\n")
+        f.write(f"{sniproxy_ip} *.{primary_domain}\n")
+        for domain in sorted(list(domains)):
+            if domain != primary_domain:
+                f.write(f"{sniproxy_ip} {domain}\n")
+    print(f"[+] Written {len(domains)} domains to {HOSTS_FILE}")
 
-    # 2. Escape dots for regex matching (e.g. gemini.google.com -> gemini\.google\.com)
-    escaped_domains = "|".join([d.replace(".", r"\.") for d in domains])
-
-    # 3. Write self-contained config using Regex matching template
+    # 2. Restored: Your exact original single server block format
     with open(CONF_FILE, "w") as f:
-        f.write(f"""{root_zones_string} {{
-    # Intercept ONLY the specific unblocked subdomains
-    template IN A {{
-        match ^(.*)({escaped_domains})\\.\$
-        answer "{{{{ .Name }}}} 300 IN A {sniproxy_ip}"
+        f.write(f"""{primary_domain}, *. {primary_domain} {{
+    hosts {HOSTS_FILE} {{
         fallthrough
+        ttl 300
     }}
-    template IN AAAA {{
-        match ^(.*)({escaped_domains})\\.\$
-        rcode NOERROR
-        fallthrough
-    }}
-    # Fallback to upstream for all other queries (e.g. regular google searches)
-    forward . 1.1.1.1 8.8.8.8
     log
     errors
 }}
 """)
-    print(f"[+] Created CoreDNS regex-filtered config file: {CONF_FILE}")
+    print(f"[+] Created CoreDNS configuration file: {CONF_FILE}")
 
 def restart_coredns():
     print("[+] Restarting CoreDNS...")
@@ -135,6 +115,7 @@ def restart_coredns():
 
 def main():
     os.makedirs(CONF_DIR, exist_ok=True)
+    os.makedirs(HOSTS_DIR, exist_ok=True)
     
     if len(sys.argv) != 3:
         print("Usage: python3 <script_name.py> <service_name> <sniproxy_ip>")
@@ -148,23 +129,24 @@ def main():
     all_domains = set()
     all_domains.update(fetch_domains_from_v2fly(service_name))
     
+    # Restored: Map the correct primary domain
+    primary_domain = f"{service_name}.com"
+    if service_name.lower() == "gemini":
+        primary_domain = "gemini.google.com"
+    elif service_name.lower() == "youtube":
+        primary_domain = "youtube.com"
+    
     if not all_domains:
-        primary_domain = f"{service_name}.com"
-        if service_name.lower() == "gemini":
-            primary_domain = "gemini.google.com"
-        elif service_name.lower() == "youtube":
-            primary_domain = "youtube.com"
-            
         all_domains.update(fetch_subdomains_crtsh(primary_domain))
         
     if not all_domains:
-        all_domains.add(f"{service_name.lower()}.com")
+        all_domains.add(primary_domain)
 
     print(f"\n[+] Found a total of {len(all_domains)} unique domains.")
 
-    write_coredns_files(service_name, all_domains, sniproxy_ip)
+    write_coredns_files(service_name, all_domains, sniproxy_ip, primary_domain)
     restart_coredns()
-    print("\n[+] Setup is complete.")
+    print("[+] Setup is complete.")
 
 if __name__ == "__main__":
     main()

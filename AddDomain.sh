@@ -2,8 +2,9 @@
 
 # --- Script Configuration ---
 CONF_DIR="/etc/coredns/conf.d"
+HOSTS_DIR="/etc/unblocker"
 
-# Dynamic VPS IP detection
+# Dynamic VPS IP detection (Zero manual hardcoding)
 SNIPROXY_IP=$(curl -s https://api.ipify.org || hostname -I | awk '{print $1}')
 
 PYTHON_SCRIPT_PATH="$(dirname "$0")/AutoDomain.py"
@@ -25,8 +26,9 @@ fi
 SERVICE_NAME="$1"
 CHOICE="$2"
 
-# Ensure the config directory exists
+# Ensure the required directories exist
 mkdir -p "$CONF_DIR"
+mkdir -p "$HOSTS_DIR"
 
 # --- Main Script Logic ---
 
@@ -52,6 +54,7 @@ case "$CHOICE" in
         echo -e "${CYAN}Proceeding with manual configuration for '$SERVICE_NAME'.${RESET}"
 
         CONF_FILE="${CONF_DIR}/${SERVICE_NAME}.conf"
+        HOSTS_FILE="${HOSTS_DIR}/${SERVICE_NAME}.hosts"
 
         if [ -f "$CONF_FILE" ]; then
             echo -e "${RED}❌ Error: Configuration for '$SERVICE_NAME' already exists. Exiting.${RESET}"
@@ -66,18 +69,17 @@ case "$CHOICE" in
             exit 1
         fi
 
-        # Write clean, self-contained CoreDNS config with template rules
+        # Restored: Your exact original hosts format
+        echo -e "${SNIPROXY_IP} ${ROOT_DOMAIN}\n${SNIPROXY_IP} *.${ROOT_DOMAIN}" > "$HOSTS_FILE"
+        echo -e "${GREEN}✅ Created hosts file: ${HOSTS_FILE}${RESET}"
+
+        # Restored: Your exact original server block
         cat <<EOL > "$CONF_FILE"
 ${ROOT_DOMAIN}, *.${ROOT_DOMAIN} {
-    template IN A {
-        match ^.*$
-        answer "{{ .Name }} 300 IN A ${SNIPROXY_IP}"
+    hosts ${HOSTS_FILE} {
+        fallthrough
+        ttl 300
     }
-    template IN AAAA {
-        match ^.*$
-        rcode NOERROR
-    }
-    forward . 1.1.1.1 8.8.8.8
     log
     errors
 }
