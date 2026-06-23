@@ -1,13 +1,12 @@
 #!/bin/bash
+set -euo pipefail
 
 # --- Script Configuration ---
 CONF_DIR="/etc/coredns/conf.d"
 HOSTS_DIR="/etc/unblocker"
 
-# Dynamic VPS IP detection (Zero manual hardcoding)
+# Dynamic VPS IP detection (Zero hardcoding)
 SNIPROXY_IP=$(curl -s https://api.ipify.org || hostname -I | awk '{print $1}')
-
-PYTHON_SCRIPT_PATH="$(dirname "$0")/AutoDomain.py"
 
 # --- Colors for user experience ---
 GREEN='\033[0;32m'
@@ -30,6 +29,74 @@ CHOICE="$2"
 mkdir -p "$CONF_DIR"
 mkdir -p "$HOSTS_DIR"
 
+# Temporary files for automatic scraper tracking
+DOMAINS_TEMP=$(mktemp)
+VISITED_TEMP=$(mktemp)
+
+# Clean up temp files on exit
+trap 'rm -f "$DOMAINS_TEMP" "$VISITED_TEMP"' EXIT
+
+# --- Recursive V2Fly Scraper in Pure Bash ---
+fetch_v2fly_domains() {
+    local sname="$1"
+    local mapped_name="$sname"
+
+    # Match service name translations dynamically
+    if [ "$sname" = "gemini" ]; then
+        mapped_name="google-gemini"
+    elif [ "$sname" = "deepmind" ]; then
+        mapped_name="google-deepmind"
+    fi
+
+    # Avoid infinite loops during circular include imports
+    if grep -Fxq "$mapped_name" "$VISITED_TEMP" 2>/dev/null; then
+        return
+    fi
+    echo "$mapped_name" >> "$VISITED_TEMP"
+
+    # Try name permutations on GitHub dynamically (name, google-name, category-name)
+    local permutations=("$mapped_name" "google-$mapped_name" "category-$mapped_name")
+    local response=""
+    local success=0
+
+    for perm in "${permutations[@]}"; do
+        response=$(curl -s -f -L --connect-timeout 5 "https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/$perm" || true)
+        if [ -n "$response" ]; then
+            success=1
+            break
+        fi
+    done
+
+    # If the permutation didn't find any file, exit gracefully
+    if [ "$success" -eq 0 ]; then
+        return
+    fi
+
+    # Parse lines recursively
+    while IFS= read -r line || [ -n "$line" ]; do
+        # Trim whitespace
+        line=$(echo "$line" | xargs)
+        # Skip comments and empty lines
+        [[ -z "$line" || "$line" =~ ^# ]] && continue
+
+        if [[ "$line" =~ ^include: ]]; then
+            local inc_service
+            inc_service=$(echo "$line" | sed 's/^include://' | cut -d'@' -f1 | xargs)
+            fetch_v2fly_domains "$inc_service"
+        elif [[ "$line" =~ ^full: ]]; then
+            local domain
+            domain=$(echo "$line" | sed 's/^full://' | cut -d'@' -f1 | xargs)
+            echo "$domain" >> "$DOMAINS_TEMP"
+        elif [[ "$line" =~ ^regexp: || "$line" =~ ^keyword: ]]; then
+            continue
+        else
+            local domain
+            domain=$(echo "$line" | cut -d'@' -f1 | xargs)
+            echo "$domain" >> "$DOMAINS_TEMP"
+        fi
+    done <<< "$response"
+}
+
 # --- Main Script Logic ---
 
 case "$CHOICE" in
@@ -37,18 +104,71 @@ case "$CHOICE" in
         echo -e "${YELLOW}---${RESET}"
         echo -e "${CYAN}Launching automatic configuration for '$SERVICE_NAME'...${RESET}"
 
-        if [ ! -f "$PYTHON_SCRIPT_PATH" ]; then
-            echo -e "${RED}❌ Error: The Python script was not found at '$PYTHON_SCRIPT_PATH'.${RESET}"
+        CONF_FILE="${CONF_DIR}/${SERVICE_NAME}.conf"
+        HOSTS_FILE="${HOSTS_DIR}/${SERVICE_NAME}.hosts"
+
+        if [ -f "$CONF_FILE" ]; then
+            echo -e "${RED}❌ Error: Configuration for '$SERVICE_NAME' already exists. Exiting.${RESET}"
             exit 1
         fi
-        
-        if [ ! -x "$PYTHON_SCRIPT_PATH" ]; then
-            echo -e "${YELLOW}⚠️ Warning: The script is not executable. Attempting to run with 'python3'.${RESET}"
+
+        # Determine the primary domain name dynamically
+        primary_domain="${SERVICE_NAME}.com"
+        if [ "${SERVICE_NAME}" = "gemini" ]; then
+            primary_domain="gemini.google.com"
+        elif [ "${SERVICE_NAME}" = "youtube" ]; then
+            primary_domain="youtube.com"
         fi
-        
-        python3 "$PYTHON_SCRIPT_PATH" "$SERVICE_NAME" "$SNIPROXY_IP"
-        echo -e "${YELLOW}Automatic script finished.${RESET}"
+
+        # 1. Primary Source: Query the V2Fly database recursively
+        fetch_v2fly_domains "$SERVICE_NAME"
+
+        # 2. Secondary Fallback: Scrape crt.sh JSON via standard grep/sed if V2Fly failed
+        if [ ! -s "$DOMAINS_TEMP" ]; then
+            echo -e "${YELLOW}[+] V2Fly empty. Falling back to crt.sh for ${primary_domain}...${RESET}"
+            local json
+            json=$(curl -s --connect-timeout 6 "https://crt.sh/json?q=${primary_domain}" || true)
+            if [ -n "$json" ]; then
+                echo "$json" | grep -o -E '"common_name":"[^"]+"' | cut -d'"' -f4 | grep -v '\*' >> "$DOMAINS_TEMP" || true
+                echo "$json" | grep -o -E '"name_value":"[^"]+"' | cut -d'"' -f4 | tr '\\n' '\n' | grep -v '\*' >> "$DOMAINS_TEMP" || true
+            fi
+        fi
+
+        # 3. Final Fallback: Add baseline primary domain if both failed
+        if [ ! -s "$DOMAINS_TEMP" ]; then
+            echo "$primary_domain" >> "$DOMAINS_TEMP"
+        fi
+
+        # Sort and remove duplicate domains
+        sort -u "$DOMAINS_TEMP" > "$DOMAINS_TEMP.sorted"
+
+        # Write clean hosts database file
+        echo -e "${SNIPROXY_IP} ${primary_domain}\n${SNIPROXY_IP} *.${primary_domain}" > "$HOSTS_FILE"
+        while IFS= read -r domain; do
+            [[ -z "$domain" || "$domain" = "$primary_domain" ]] && continue
+            echo "${SNIPROXY_IP} ${domain}" >> "$HOSTS_FILE"
+        done < "$DOMAINS_TEMP.sorted"
+
+        # Write clean, comma-free CoreDNS server block config
+        cat <<EOL > "$CONF_FILE"
+${primary_domain} {
+    hosts ${HOSTS_FILE} {
+        fallthrough
+        ttl 300
+    }
+    forward . 1.1.1.1 8.8.8.8
+    log
+    errors
+}
+EOL
+
+        echo -e "${GREEN}✅ Created hosts file: ${HOSTS_FILE}${RESET}"
+        echo -e "${GREEN}✅ Created CoreDNS config file: ${CONF_FILE}${RESET}"
+        echo -e "${CYAN}Restarting CoreDNS...${RESET}"
+        sudo systemctl restart coredns
+        echo -e "${GREEN}[+] Setup completed successfully.${RESET}"
         ;;
+
     "manual")
         echo -e "${YELLOW}---${RESET}"
         echo -e "${CYAN}Proceeding with manual configuration for '$SERVICE_NAME'.${RESET}"
@@ -69,14 +189,14 @@ case "$CHOICE" in
             exit 1
         fi
 
-        # Write clean manual reference list for Menu view
-        echo -e "${SNIPROXY_IP} ${ROOT_DOMAIN}" > "$HOSTS_FILE"
+        # Write clean manual reference list
+        echo -e "${SNIPROXY_IP} ${ROOT_DOMAIN}\n${SNIPROXY_IP} *.${ROOT_DOMAIN}" > "$HOSTS_FILE"
         echo -e "${GREEN}✅ Created hosts file: ${HOSTS_FILE}${RESET}"
 
         # Escape dots for rewrite regex (e.g. example.com -> example\.com)
         ESCAPED_DOMAIN=$(echo "$ROOT_DOMAIN" | sed 's/\./\\./g')
 
-        # Corrected: Clean, single-domain server block header (no commas, no wildcards)
+        # Clean, single-domain server block (no commas, no wildcards in header)
         cat <<EOL > "$CONF_FILE"
 ${ROOT_DOMAIN} {
     rewrite stop {
