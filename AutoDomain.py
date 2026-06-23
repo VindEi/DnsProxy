@@ -86,16 +86,16 @@ def write_coredns_files(service_name, domains, sniproxy_ip):
     HOSTS_FILE = os.path.join(HOSTS_DIR, f"{service_name}.hosts")
     CONF_FILE = os.path.join(CONF_DIR, f"{service_name}.conf")
 
+    # 1. Write the clean hosts database file
     with open(HOSTS_FILE, "w") as f:
         for domain in sorted(list(domains)):
             f.write(f"{sniproxy_ip} {domain}\n")
     print(f"[+] Written {len(domains)} domains to {HOSTS_FILE}")
 
-    # Map the exact domains as active CoreDNS zones
-    zones_string = " ".join(sorted(list(domains)))
-
+    # 2. Write separate, clean server blocks for each domain to bypass the hosts plugin limitation
     with open(CONF_FILE, "w") as f:
-        f.write(f"""{zones_string} {{
+        for domain in sorted(list(domains)):
+            f.write(f"""{domain} {{
     hosts {HOSTS_FILE} {{
         fallthrough
         ttl 300
@@ -105,7 +105,7 @@ def write_coredns_files(service_name, domains, sniproxy_ip):
     errors
 }}
 """)
-    print(f"[+] Created CoreDNS config file: {CONF_FILE}")
+    print(f"[+] Created CoreDNS multi-block configuration file: {CONF_FILE}")
 
 def restart_coredns():
     print("[+] Restarting CoreDNS...")
