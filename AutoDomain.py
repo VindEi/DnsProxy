@@ -90,7 +90,7 @@ def write_coredns_files(service_name, domains, sniproxy_ip, primary_domain):
                 f.write(f"{sniproxy_ip} {domain}\n")
     print(f"[+] Written {len(domains)} domains to {HOSTS_FILE}")
 
-    # 2. Corrected: Clean, single-domain server block header (no commas, no wildcards)
+    # 2. Corrected: Single clean server block header (no commas, no wildcards)
     with open(CONF_FILE, "w") as f:
         f.write(f"""{primary_domain} {{
     hosts {HOSTS_FILE} {{
@@ -128,6 +128,7 @@ def main():
     all_domains = set()
     all_domains.update(fetch_domains_from_v2fly(service_name))
     
+    # Restored: Map the correct primary domain
     primary_domain = f"{service_name}.com"
     if service_name.lower() == "gemini":
         primary_domain = "gemini.google.com"
