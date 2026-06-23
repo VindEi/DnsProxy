@@ -84,17 +84,16 @@ def write_coredns_files(service_name, domains, sniproxy_ip, primary_domain):
 
     # 1. Write the clean hosts database file containing all discovered domains
     with open(HOSTS_FILE, "w") as f:
-        # Include root and wildcard for the primary domain as well
+        # Include root for the primary domain as well
         f.write(f"{sniproxy_ip} {primary_domain}\n")
-        f.write(f"{sniproxy_ip} *.{primary_domain}\n")
         for domain in sorted(list(domains)):
             if domain != primary_domain:
                 f.write(f"{sniproxy_ip} {domain}\n")
     print(f"[+] Written {len(domains)} domains to {HOSTS_FILE}")
 
-    # 2. Restored: Your exact original single server block format with forwarder added
+    # 2. Corrected: Single clean server block header (no conflicting wildcards)
     with open(CONF_FILE, "w") as f:
-        f.write(f"""{primary_domain}, *.{primary_domain} {{
+        f.write(f"""{primary_domain} {{
     hosts {HOSTS_FILE} {{
         fallthrough
         ttl 300

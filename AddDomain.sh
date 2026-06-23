@@ -69,13 +69,20 @@ case "$CHOICE" in
             exit 1
         fi
 
-        # Your original hosts format
-        echo -e "${SNIPROXY_IP} ${ROOT_DOMAIN}\n${SNIPROXY_IP} *.${ROOT_DOMAIN}" > "$HOSTS_FILE"
+        # Write clean manual reference list for Menu view
+        echo -e "${SNIPROXY_IP} ${ROOT_DOMAIN}" > "$HOSTS_FILE"
         echo -e "${GREEN}✅ Created hosts file: ${HOSTS_FILE}${RESET}"
 
-        # Restored with the required forward fallback
+        # Escape dots for rewrite regex (e.g. example.com -> example\.com)
+        ESCAPED_DOMAIN=$(echo "$ROOT_DOMAIN" | sed 's/\./\\./g')
+
+        # Corrected: Single clean server block header (no conflicting wildcards)
         cat <<EOL > "$CONF_FILE"
-${ROOT_DOMAIN}, *.${ROOT_DOMAIN} {
+${ROOT_DOMAIN} {
+    rewrite stop {
+        name regex (.*)\.${ESCAPED_DOMAIN} ${ROOT_DOMAIN}
+        answer auto
+    }
     hosts ${HOSTS_FILE} {
         fallthrough
         ttl 300
