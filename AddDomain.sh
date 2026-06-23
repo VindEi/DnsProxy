@@ -69,7 +69,7 @@ fetch_v2fly_domains() {
 
     # Parse lines recursively
     while IFS= read -r line || [ -n "$line" ]; do
-        # Bug resolved: Strip inline comments first (e.g. "domain.com # comment" -> "domain.com")
+        # Strip inline comments first (e.g. "domain.com # comment" -> "domain.com")
         line=$(echo "$line" | cut -d'#' -f1 | xargs)
         
         # Skip empty lines
@@ -149,7 +149,7 @@ case "$CHOICE" in
                 fi
             fi
 
-            # Robust root extraction
+            # Public Suffix Detector: If the domain ends with .co.xx, .com.xx, etc., take the last 3 parts
             if [[ "$domain" =~ \.co\.[a-z]{2}$ || "$domain" =~ \.com\.[a-z]{2}$ || "$domain" =~ \.org\.[a-z]{2}$ || "$domain" =~ \.net\.[a-z]{2}$ ]]; then
                 root=$(echo "$domain" | awk -F. '{if (NF>=3) print $(NF-2)"."$(NF-1)"."$NF; else print $0}')
             else
@@ -205,8 +205,17 @@ case "$CHOICE" in
                 continue
             fi
 
+            # Escape dots for rewrite regex (e.g. githubcopilot.com -> githubcopilot\.com)
+            escaped_zone=$(echo "$root_zone" | sed 's/\./\\./g')
+
+            # Corrected: Included dynamic rewrite wildcard plugin inside the automatic blocks!
             cat <<EOL >> "$CONF_FILE"
 ${root_zone} {
+    # Dynamically rewrite wildcard subdomains to the root domain internally
+    rewrite stop {
+        name regex (.*)\.${escaped_zone} ${root_zone}
+        answer auto
+    }
     hosts ${HOSTS_FILE} {
         fallthrough
         ttl 300
