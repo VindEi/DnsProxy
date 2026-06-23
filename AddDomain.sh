@@ -8,8 +8,6 @@ HOSTS_DIR="/etc/unblocker"
 # Dynamic VPS IP detection (Zero hardcoding)
 SNIPROXY_IP=$(curl -s https://api.ipify.org || hostname -I | awk '{print $1}')
 
-PYTHON_SCRIPT_PATH="$(dirname "$0")/AutoDomain.py"
-
 # --- Colors for user experience ---
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -39,19 +37,9 @@ ROOTS_TEMP=$(mktemp)
 # Clean up temp files on exit
 trap 'rm -f "$DOMAINS_TEMP" "$VISITED_TEMP" "$ROOTS_TEMP"' EXIT
 
-# --- Recursive V2Fly Scraper in Pure Bash ---
+# --- Recursive V2Fly Scraper in Pure Bash (No Presets) ---
 fetch_v2fly_domains() {
-    local sname="$1"
-    local mapped_name="$sname"
-
-    # Match service name translations dynamically
-    if [ "$sname" = "gemini" ]; then
-        mapped_name="google-gemini"
-    elif [ "$sname" = "deepmind" ]; then
-        mapped_name="google-deepmind"
-    elif [ "$sname" = "riotgames" ]; then
-        mapped_name="riot"
-    fi
+    local mapped_name="$1"
 
     # Avoid infinite loops during circular include imports
     if grep -Fxq "$mapped_name" "$VISITED_TEMP" 2>/dev/null; then
@@ -60,12 +48,12 @@ fetch_v2fly_domains() {
     echo "$mapped_name" >> "$VISITED_TEMP"
 
     # Try name permutations on GitHub dynamically (name, google-name, category-name)
-    local permutations=("$mapped_name" "google-$mapped_name" "category-$mapped_name")
+    local permutations=("${mapped_name}" "google-${mapped_name}" "category-${mapped_name}")
     local response=""
     local success=0
 
     for perm in "${permutations[@]}"; do
-        response=$(curl -s -f -L --connect-timeout 5 "https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/$perm" || true)
+        response=$(curl -s -f -L --connect-timeout 5 "https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/${perm}" || true)
         if [ -n "$response" ]; then
             success=1
             break
@@ -119,7 +107,7 @@ case "$CHOICE" in
 
         # Determine the primary domain name dynamically
         primary_domain="${SERVICE_NAME}.com"
-        if [ "${SERVICE_NAME}" = "gemini" ]; then
+        if [ "${SERVICE_NAME}" = "google-gemini" ]; then
             primary_domain="gemini.google.com"
         elif [ "${SERVICE_NAME}" = "youtube" ]; then
             primary_domain="youtube.com"
@@ -158,16 +146,14 @@ case "$CHOICE" in
                 fi
             fi
 
-            # Bug resolved: Removed 'local' attribute from loop variable inside the main body
             root=$(echo "$domain" | awk -F. '{if (NF>=2) print $(NF-1)"."$NF; else print $0}')
             echo "$root" >> "$ROOTS_TEMP"
         done < "$DOMAINS_TEMP.sorted"
         
         sort -u "$ROOTS_TEMP" > "$ROOTS_TEMP.unique"
-        zones_string=$(tr '\n' ' ' < "$ROOTS_TEMP.unique" | xargs)
 
         # Write clean hosts database file containing all discovered domains
-        echo -e "${SNIPROXY_IP} ${primary_domain}\n${SNIPROXY_IP} *.${primary_domain}" > "$HOSTS_FILE"
+        echo -e "${SNIPROXY_IP} ${primary_domain}" > "$HOSTS_FILE"
         while IFS= read -r domain; do
             [[ -z "$domain" || "$domain" = "$primary_domain" ]] && continue
             
@@ -187,9 +173,12 @@ case "$CHOICE" in
             domain_count=$(wc -l < "$HOSTS_FILE")
         fi
 
-        # Write clean, comma-free CoreDNS server block config (under token limit)
-        cat <<EOL > "$CONF_FILE"
-${zones_string} {
+        # Write separate, clean, comma-free server blocks for each parent root domain
+        true > "$CONF_FILE" # Clear any existing file
+        while IFS= read -r root_zone || [ -n "$root_zone" ]; do
+            [[ -z "$root_zone" ]] && continue
+            cat <<EOL >> "$CONF_FILE"
+${root_zone} {
     hosts ${HOSTS_FILE} {
         fallthrough
         ttl 300
@@ -199,6 +188,7 @@ ${zones_string} {
     errors
 }
 EOL
+        done < "$ROOTS_TEMP.unique"
 
         echo -e "${GREEN}✅ Successfully parsed and added ${domain_count} domains to: ${HOSTS_FILE}${RESET}"
         echo -e "${GREEN}✅ Created CoreDNS config file: ${CONF_FILE}${RESET}"
@@ -228,7 +218,7 @@ EOL
         fi
 
         # Write clean manual reference list
-        echo -e "${SNIPROXY_IP} ${ROOT_DOMAIN}\n${SNIPROXY_IP} *.${ROOT_DOMAIN}" > "$HOSTS_FILE"
+        echo -e "${SNIPROXY_IP} ${ROOT_DOMAIN}" > "$HOSTS_FILE"
         echo -e "${GREEN}✅ Created hosts file: ${HOSTS_FILE}${RESET}"
 
         # Escape dots for rewrite regex (e.g. example.com -> example\.com)
