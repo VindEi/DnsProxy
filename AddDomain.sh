@@ -3,10 +3,12 @@
 # --- Script Configuration ---
 CONF_DIR="/etc/coredns/conf.d"
 HOSTS_DIR="/etc/unblocker"
-SNIPROXY_IP="193.56.135.102"
+
+# Dynamic VPS IP detection
+SNIPROXY_IP=$(curl -s https://api.ipify.org || hostname -I | awk '{print $1}')
+
 PYTHON_SCRIPT_PATH="$(dirname "$0")/AutoDomain.py"
 
-# --- Colors for user experience ---
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 RED='\033[0;31m'
@@ -51,6 +53,7 @@ case "$CHOICE" in
         echo -e "${CYAN}Proceeding with manual configuration for '$SERVICE_NAME'.${RESET}"
 
         CONF_FILE="${CONF_DIR}/${SERVICE_NAME}.conf"
+        HOSTS_FILE="${HOSTS_DIR}/${SERVICE_NAME}.hosts"
 
         if [ -f "$CONF_FILE" ]; then
             echo -e "${RED}❌ Error: Configuration for '$SERVICE_NAME' already exists. Exiting.${RESET}"
@@ -65,13 +68,25 @@ case "$CHOICE" in
             exit 1
         fi
 
-        # Resolved Manual Bug: CoreDNS template block handles wildcards natively
+        # Write the simple, clean hosts entry
+        echo -e "${SNIPROXY_IP} ${ROOT_DOMAIN}" > "$HOSTS_FILE"
+        echo -e "${GREEN}✅ Created hosts file: ${HOSTS_FILE}${RESET}"
+
+        # Escape dots for rewrite regex (e.g. example.com -> example\.com)
+        ESCAPED_DOMAIN=$(echo "$ROOT_DOMAIN" | sed 's/\./\\./g')
+
+        # Write CoreDNS config using rewrite and hosts approach
         cat <<EOL > "$CONF_FILE"
-${ROOT_DOMAIN}, *.${ROOT_DOMAIN} {
-    template IN A {
-        answer "{{ .Name }} 300 IN A ${SNIPROXY_IP}"
+${ROOT_DOMAIN} {
+    # Rewrite all wildcard subdomains to the root domain internally
+    rewrite stop {
+        name regex (.*)\.${ESCAPED_DOMAIN} ${ROOT_DOMAIN}
+        answer auto
     }
-    # Fallback to upstream for TXT, MX, etc.
+    hosts ${HOSTS_FILE} {
+        fallthrough
+        ttl 300
+    }
     forward . 1.1.1.1 8.8.8.8
     log
     errors
