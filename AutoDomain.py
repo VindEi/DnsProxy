@@ -92,9 +92,9 @@ def write_coredns_files(service_name, domains, sniproxy_ip, primary_domain):
                 f.write(f"{sniproxy_ip} {domain}\n")
     print(f"[+] Written {len(domains)} domains to {HOSTS_FILE}")
 
-    # 2. Restored: Your exact original single server block format
+    # 2. Restored: Your exact original single server block format (fixed whitespace typo)
     with open(CONF_FILE, "w") as f:
-        f.write(f"""{primary_domain}, *. {primary_domain} {{
+        f.write(f"""{primary_domain}, *.{primary_domain} {{
     hosts {HOSTS_FILE} {{
         fallthrough
         ttl 300
