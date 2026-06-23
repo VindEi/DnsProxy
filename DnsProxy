@@ -73,6 +73,46 @@ function service_status() {
     echo
 }
 
+# Unified Selector Helper: Scans active configs and displays them as a numbered list
+function select_active_service() {
+    local services=()
+    local count=0
+    
+    # Populate array with active configuration names
+    for file in "$CONFIG_DIR"/*.conf; do
+        if [ -e "$file" ]; then
+            local sname=$(basename "$file" .conf)
+            services+=("$sname")
+            ((count++))
+        fi
+    done
+    
+    if [ "$count" -eq 0 ]; then
+        echo -e "${YELLOW}(No active services found)${RESET}"
+        return 1
+    fi
+    
+    echo -e "${CYAN}Select an active service from the list:${RESET}"
+    for i in "${!services[@]}"; do
+        echo -e "$((i+1))) ${services[$i]}"
+    done
+    echo -e "$((count+1))) 🔙 Back"
+    echo
+    
+    while true; do
+        read -p "Enter number: " sel
+        if [[ "$sel" =~ ^[0-9]+$ ]] && [ "$sel" -ge 1 ] && [ "$sel" -le "$((count+1))" ]; then
+            if [ "$sel" -eq "$((count+1))" ]; then
+                return 1 # User chose Back
+            fi
+            selected_service="${services[$((sel-1))]}"
+            return 0
+        else
+            echo -e "${RED}Invalid selection. Please try again.${RESET}"
+        fi
+    done
+}
+
 function manage_installation() {
     if [ -f "/usr/local/bin/coredns" ]; then
         echo -e "${RED}⚠️  WARNING: You are about to UNINSTALL DnsProxy.${RESET}"
@@ -112,10 +152,42 @@ function list_services() {
 }
 
 function add_service() {
-    echo -ne "${YELLOW}Enter the service name to add (e.g., spotify, gemini): ${RESET}"
-    read service_name
+    clear_and_header
+    echo -e "${YELLOW}➕ Add a New Service:${RESET}"
+    echo -e "1) spotify"
+    echo -e "2) gemini"
+    echo -e "3) discord"
+    echo -e "4) youtube"
+    echo -e "5) openai"
+    echo -e "6) ✏️  [Type a custom service name]"
+    echo -e "7) 🔙 Back"
+    echo
+    read -p "Choose an option: " add_choice
+    
+    local service_name=""
+    case "$add_choice" in
+        1) service_name="spotify" ;;
+        2) service_name="gemini" ;;
+        3) service_name="discord" ;;
+        4) service_name="youtube" ;;
+        5) service_name="openai" ;;
+        6) 
+            echo -ne "${YELLOW}Enter custom service name (e.g. netflix): ${RESET}"
+            read service_name
+            ;;
+        7) return ;;
+        *) echo -e "${RED}Invalid option.${RESET}"; sleep 1; return ;;
+    esac
+    
+    service_name=$(echo "$service_name" | tr '[:upper:]' '[:lower:]' | xargs)
+    if [ -z "$service_name" ]; then
+        echo -e "${RED}Service name cannot be empty.${RESET}"
+        sleep 1
+        return
+    fi
+    
     echo -e "---"
-    echo -e "${YELLOW}Select a configuration method:${RESET}"
+    echo -e "${YELLOW}Select a configuration method for '$service_name':${RESET}"
     echo -e "1) Automatic"
     echo -e "2) Manual"
     read -p "Enter your choice (1 or 2): " config_choice
@@ -131,27 +203,41 @@ function add_service() {
 }
 
 function remove_service() {
-    echo -ne "${YELLOW}Enter the service name to remove (e.g., gemini, spotify): ${RESET}"
-    read service_name
-    local conf_file="$CONFIG_DIR/$service_name.conf"
-    local hosts_file="$HOSTS_DIR/$service_name.hosts"
+    clear_and_header
+    echo -e "${YELLOW}🗑️  Remove a Service:${RESET}"
+    
+    local selected_service=""
+    if ! select_active_service; then
+        read -p "Press enter to return..."
+        return
+    fi
+    
+    local conf_file="$CONFIG_DIR/$selected_service.conf"
+    local hosts_file="$HOSTS_DIR/$selected_service.hosts"
 
     if [ -f "$conf_file" ] || [ -f "$hosts_file" ]; then
         sudo rm -f "$conf_file" "$hosts_file"
-        echo -e "${GREEN}✅ Removed configuration files for '$service_name'${RESET}"
+        echo -e "${GREEN}✅ Removed configuration files for '$selected_service'${RESET}"
         sudo systemctl restart coredns
         echo -e "${CYAN}CoreDNS service restarted.${RESET}"
     else
-        echo -e "${RED}❌ No configuration found for '$service_name'.${RESET}"
+        echo -e "${RED}❌ No configuration found for '$selected_service'.${RESET}"
     fi
     read -p "Press enter to return..."
 }
 
 function view_config() {
-    echo -ne "${YELLOW}Enter the service name to view (e.g., gemini, spotify): ${RESET}"
-    read service_name
-    local conf_file="$CONFIG_DIR/$service_name.conf"
-    local hosts_file="$HOSTS_DIR/$service_name.hosts"
+    clear_and_header
+    echo -e "${YELLOW}📝 View Configuration:${RESET}"
+    
+    local selected_service=""
+    if ! select_active_service; then
+        read -p "Press enter to return..."
+        return
+    fi
+    
+    local conf_file="$CONFIG_DIR/$selected_service.conf"
+    local hosts_file="$HOSTS_DIR/$selected_service.hosts"
 
     if [ -f "$hosts_file" ]; then
         echo -e "${CYAN}--- Contents of $hosts_file ---${RESET}"
@@ -162,7 +248,7 @@ function view_config() {
         cat "$conf_file"
         echo -e "${CYAN}-------------------------------${RESET}"
     else
-        echo -e "${RED}❌ No configuration or hosts file found for '$service_name'.${RESET}"
+        echo -e "${RED}❌ No configuration or hosts file found for '$selected_service'.${RESET}"
     fi
     read -p "Press enter to return..."
 }
@@ -172,14 +258,12 @@ function main_menu() {
         clear_and_header
         service_status
         
-        # 1. Dynamic Installation toggle
         if [ -f "/usr/local/bin/coredns" ]; then
             echo -e "${YELLOW}1) ❌ Uninstall DnsProxy"
         else
             echo -e "${YELLOW}1) 📥 Install DnsProxy"
         fi
         
-        # Flat, ergonomic structure
         echo -e "2) 📃 List active services"
         echo -e "3) ➕ Add a new service"
         echo -e "4) 🗑️  Remove a service"
