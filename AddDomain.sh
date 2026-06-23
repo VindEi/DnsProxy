@@ -41,17 +41,7 @@ trap 'rm -f "$DOMAINS_TEMP" "$VISITED_TEMP" "$ROOTS_TEMP"' EXIT
 
 # --- Recursive V2Fly Scraper in Pure Bash ---
 fetch_v2fly_domains() {
-    local sname="$1"
-    local mapped_name="$sname"
-
-    # Match service name translations dynamically
-    if [ "$sname" = "gemini" ]; then
-        mapped_name="google-gemini"
-    elif [ "$sname" = "deepmind" ]; then
-        mapped_name="google-deepmind"
-    elif [ "$sname" = "riotgames" ]; then
-        mapped_name="riot"
-    fi
+    local mapped_name="$1"
 
     # Avoid infinite loops during circular include imports
     if grep -Fxq "$mapped_name" "$VISITED_TEMP" 2>/dev/null; then
@@ -146,7 +136,7 @@ case "$CHOICE" in
         # Sort, remove duplicate domains, and strip any leading dots
         sort -u "$DOMAINS_TEMP" | sed 's/^\.//' > "$DOMAINS_TEMP.sorted"
 
-        # Extract unique parent root domains (keeps the server block header tiny)
+        # Extract unique parent root domains (supports 2-part and 3-part public suffixes)
         while IFS= read -r domain || [ -n "$domain" ]; do
             [[ -z "$domain" ]] && continue
             
@@ -158,7 +148,12 @@ case "$CHOICE" in
                 fi
             fi
 
-            root=$(echo "$domain" | awk -F. '{if (NF>=2) print $(NF-1)"."$NF; else print $0}')
+            # Public Suffix Detector: If the domain ends with .co.xx, .com.xx, etc., take the last 3 parts
+            if [[ "$domain" =~ \.co\.[a-z]{2}$ || "$domain" =~ \.com\.[a-z]{2}$ || "$domain" =~ \.org\.[a-z]{2}$ || "$domain" =~ \.net\.[a-z]{2}$ ]]; then
+                root=$(echo "$domain" | awk -F. '{if (NF>=3) print $(NF-2)"."$(NF-1)"."$NF; else print $0}')
+            else
+                root=$(echo "$domain" | awk -F. '{if (NF>=2) print $(NF-1)"."$NF; else print $0}')
+            fi
             echo "$root" >> "$ROOTS_TEMP"
         done < "$DOMAINS_TEMP.sorted"
         
