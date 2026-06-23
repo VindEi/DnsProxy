@@ -58,44 +58,22 @@ function clear_and_header() {
 }
 
 function service_status() {
-    local vps_ip
-    vps_ip=$(cat /etc/dnsproxy/vps_ip.txt 2>/dev/null || curl -s https://api.ipify.org || echo "Unknown")
-
-    # Detect CoreDNS / Nginx States
-    local dns_state="🔴 Stopped"
-    local nginx_state="🔴 Stopped"
-    systemctl is-active --quiet coredns && dns_state="🟢 Running"
-    systemctl is-active --quiet nginx && nginx_state="🟢 Running"
-
-    # Compute total proxied domain count across all active config files
-    local active_services=0
-    local total_domains=0
+    echo -e "${YELLOW}🔍 Service Status:${RESET}"
+    systemctl is-active --quiet coredns && echo -e "🟢 CoreDNS: ${GREEN}Running${RESET}" || echo -e "🔴 CoreDNS: ${RED}Stopped${RESET}"
+    systemctl is-active --quiet nginx && echo -e "🟢 NGINX: ${GREEN}Running${RESET}" || echo -e "🔴 NGINX: ${RED}Stopped${RESET}"
+    
+    local count=0
     if [ -d "$CONFIG_DIR" ]; then
         for file in "$CONFIG_DIR"/*.conf; do
             if [ -e "$file" ]; then
-                ((active_services++))
-                local sname=$(basename "$file" .conf)
-                local hfile="$HOSTS_DIR/${sname}.hosts"
-                if [ -f "$hfile" ]; then
-                    local dcount
-                    dcount=$(wc -l < "$hfile")
-                    total_domains=$((total_domains + dcount))
-                fi
+                ((count++))
             fi
         done
     fi
-
-    # Render clean diagnostic dashboard
-    echo -e "${CYAN}┌──────────────────────────────────────────────────────┐"
-    echo -e "  ${BOLD}VPS Public IP${RESET}  :  ${YELLOW}${vps_ip}${RESET}"
-    echo -e "  ${BOLD}CoreDNS State${RESET}  :  ${dns_state}"
-    echo -e "  ${BOLD}NGINX State${RESET}    :  ${nginx_state}"
-    echo -e "  ${BOLD}Active Proxies${RESET} :  ${GREEN}${active_services} services${RESET} (${CYAN}${total_domains} domains${RESET})"
-    echo -e "${CYAN}└──────────────────────────────────────────────────────┘${RESET}"
+    echo -e "📂 Active Services: ${CYAN}${count}${RESET}"
     echo
 }
 
-# Numbered Selection List Helper (Bypasses manual typing for View / Delete options)
 function select_active_service() {
     local services=()
     local count=0
@@ -123,7 +101,6 @@ function select_active_service() {
     
     while true; do
         read -n 2 -p "Enter number: " sel
-        # Clean up any trailing space from read -n 2
         sel=$(echo "$sel" | xargs)
         if [[ "$sel" =~ ^[0-9]+$ ]] && [ "$sel" -ge 1 ] && [ "$sel" -le "$((count+1))" ]; then
             if [ "$sel" -eq "$((count+1))" ]; then
@@ -184,9 +161,8 @@ function list_services() {
     if [ "$count" -eq 0 ]; then
         echo -e "${YELLOW}(No active services found)${RESET}"
     else
-        # Render clean, aligned status table
         printf "${CYAN}%-4s %-16s %-12s %-10s %-15s${RESET}\n" "ID" "SERVICE NAME" "TYPE" "DOMAINS" "PROXY IP"
-        echo -e "${CYAN}------------------------------------------------─────────────────────${RESET}"
+        echo -e "${CYAN}---------------------------------------------------------------------${RESET}"
         for i in "${!services[@]}"; do
             local sname="${services[$i]}"
             local type="Manual"
@@ -337,7 +313,6 @@ function main_menu() {
         echo -e "  ${CYAN}[6]${RESET} 🚪 Exit"
         echo
         
-        # Non-blocking, single-keypress listener
         read -n 1 -s choice
         case "$choice" in
             1) manage_installation ;;

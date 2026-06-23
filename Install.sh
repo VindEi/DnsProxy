@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -24,8 +25,8 @@ function install_CoreDNS() {
     fi
 
     sudo mkdir -p "$CONFIG_DIR"
+    sudo touch "${CONFIG_DIR}/.placeholder.conf"
 
-    # CoreDNS runs directly on public Port 53
     echo -e "${YELLOW}📝 Writing Corefile...${RESET}"
     sudo tee "$COREFILE" > /dev/null <<EOF
 import conf.d/*.conf
@@ -94,7 +95,6 @@ EOF
     sudo mkdir -p /etc/nginx/stream.d
     sudo mkdir -p /etc/nginx/conf.d
     
-    # Generic HTTP Proxy on Port 80
     echo -e "${YELLOW}📝 Configuring Port 80 HTTP Proxy...${RESET}"
     sudo tee /etc/nginx/conf.d/http_proxy.conf > /dev/null <<'EOF'
 server {
@@ -109,7 +109,6 @@ server {
 }
 EOF
 
-    # Generic Port 443 Stream Proxy (Zero VPN/VLESS/Reality configuration)
     echo -e "${YELLOW}📝 Configuring Port 443 Stream Proxy...${RESET}"
     sudo tee /etc/nginx/stream.d/smartdns.conf > /dev/null <<'EOF'
 resolver 1.1.1.1 8.8.8.8 valid=300s;
@@ -130,12 +129,15 @@ EOF
 
 function install_Service() {
     clear
-    echo -e "${YELLOW}📦 Updating and installing packages...${RESET}"
-    sudo apt update && sudo apt upgrade -y
+    echo -e "${YELLOW}📦 Installing required packages...${RESET}"
     sudo apt install -y nginx-extras ufw curl tar
 
     install_CoreDNS || return 1
     configure_nginx
+
+    echo -e "${YELLOW}💾 Saving public IP for dashboard...${RESET}"
+    sudo mkdir -p /etc/dnsproxy
+    curl -s https://api.ipify.org | sudo tee /etc/dnsproxy/vps_ip.txt > /dev/null
 
     echo -e "${YELLOW}🔐 Configuring UFW...${RESET}"
     sudo ufw allow ssh comment 'SSH'

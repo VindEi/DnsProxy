@@ -8,9 +8,6 @@ HOSTS_DIR="/etc/unblocker"
 # Dynamic VPS IP detection (Zero hardcoding)
 SNIPROXY_IP=$(curl -s https://api.ipify.org || hostname -I | awk '{print $1}')
 
-PYTHON_SCRIPT_PATH="$(dirname "$0")/AutoDomain.py"
-
-# --- Colors for user experience ---
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 RED='\033[0;31m'
@@ -130,7 +127,6 @@ case "$CHOICE" in
         # 2. Secondary Fallback: Scrape crt.sh JSON via standard grep/sed if V2Fly failed
         if [ ! -s "$DOMAINS_TEMP" ]; then
             echo -e "${YELLOW}[+] V2Fly empty. Falling back to crt.sh for ${primary_domain}...${RESET}"
-            # Bug resolved: Removed 'local' attribute from script main body
             json=$(curl -s --connect-timeout 6 "https://crt.sh/json?q=${primary_domain}" || true)
             if [ -n "$json" ]; then
                 echo "$json" | grep -o -E '"common_name":"[^"]+"' | cut -d'"' -f4 | grep -v '\*' >> "$DOMAINS_TEMP" || true
@@ -154,7 +150,6 @@ case "$CHOICE" in
         done < "$DOMAINS_TEMP.sorted"
 
         # Dynamically count the written lines
-        # Bug resolved: Removed 'local' attribute from script main body
         domain_count=0
         if [ -f "$HOSTS_FILE" ]; then
             domain_count=$(wc -l < "$HOSTS_FILE")
