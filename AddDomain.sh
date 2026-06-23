@@ -8,6 +8,8 @@ HOSTS_DIR="/etc/unblocker"
 # Dynamic VPS IP detection (Zero hardcoding)
 SNIPROXY_IP=$(curl -s https://api.ipify.org || hostname -I | awk '{print $1}')
 
+PYTHON_SCRIPT_PATH="$(dirname "$0")/AutoDomain.py"
+
 # --- Colors for user experience ---
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -32,10 +34,9 @@ mkdir -p "$HOSTS_DIR"
 # Temporary files for automatic scraper tracking
 DOMAINS_TEMP=$(mktemp)
 VISITED_TEMP=$(mktemp)
-ROOTS_TEMP=$(mktemp)
 
 # Clean up temp files on exit
-trap 'rm -f "$DOMAINS_TEMP" "$VISITED_TEMP" "$ROOTS_TEMP"' EXIT
+trap 'rm -f "$DOMAINS_TEMP" "$VISITED_TEMP"' EXIT
 
 # --- Recursive V2Fly Scraper in Pure Bash (No Presets) ---
 fetch_v2fly_domains() {
@@ -134,30 +135,15 @@ case "$CHOICE" in
         # Sort, remove duplicate domains, and strip any leading dots
         sort -u "$DOMAINS_TEMP" | sed 's/^\.//' > "$DOMAINS_TEMP.sorted"
 
-        # Extract unique parent root domains (keeps the server block header tiny)
-        while IFS= read -r domain || [ -n "$domain" ]; do
-            [[ -z "$domain" ]] && continue
-            
-            # Optimization: Filter out regional Google TLDs (e.g. google.fr, google.it)
-            # We only keep Google domains ending in .com, .cn, .dev, .org, or .net
-            if [[ "$domain" =~ google\.[a-z]{2,3}$ || "$domain" =~ google\.co\.[a-z]{2}$ || "$domain" =~ google\.com\.[a-z]{2}$ ]]; then
-                if [[ ! "$domain" =~ \.com$ && ! "$domain" =~ \.cn$ && ! "$domain" =~ \.dev$ && ! "$domain" =~ \.org$ && ! "$domain" =~ \.net$ ]]; then
-                    continue
-                fi
-            fi
-
-            root=$(echo "$domain" | awk -F. '{if (NF>=2) print $(NF-1)"."$NF; else print $0}')
-            echo "$root" >> "$ROOTS_TEMP"
-        done < "$DOMAINS_TEMP.sorted"
-        
-        sort -u "$ROOTS_TEMP" > "$ROOTS_TEMP.unique"
+        # Join the exact domains into a single space-separated string (no commas, no wildcards in header)
+        zones_string=$(tr '\n' ' ' < "$DOMAINS_TEMP.sorted" | xargs)
 
         # Write clean hosts database file containing all discovered domains
-        echo -e "${SNIPROXY_IP} ${primary_domain}" > "$HOSTS_FILE"
+        echo -e "${SNIPROXY_IP} ${primary_domain}\n${SNIPROXY_IP} *.${primary_domain}" > "$HOSTS_FILE"
         while IFS= read -r domain; do
             [[ -z "$domain" || "$domain" = "$primary_domain" ]] && continue
             
-            # Apply same Google TLD filter to the hosts file
+            # Apply Google TLD filter to the hosts file (skips regional google TLDs like google.fr)
             if [[ "$domain" =~ google\.[a-z]{2,3}$ || "$domain" =~ google\.co\.[a-z]{2}$ || "$domain" =~ google\.com\.[a-z]{2}$ ]]; then
                 if [[ ! "$domain" =~ \.com$ && ! "$domain" =~ \.cn$ && ! "$domain" =~ \.dev$ && ! "$domain" =~ \.org$ && ! "$domain" =~ \.net$ ]]; then
                     continue
@@ -173,12 +159,9 @@ case "$CHOICE" in
             domain_count=$(wc -l < "$HOSTS_FILE")
         fi
 
-        # Write separate, clean, comma-free server blocks for each parent root domain
-        true > "$CONF_FILE" # Clear any existing file
-        while IFS= read -r root_zone || [ -n "$root_zone" ]; do
-            [[ -z "$root_zone" ]] && continue
-            cat <<EOL >> "$CONF_FILE"
-${root_zone} {
+        # Write clean, single-block CoreDNS config using exact domains in the header (no commas, no wildcards)
+        cat <<EOL > "$CONF_FILE"
+${zones_string} {
     hosts ${HOSTS_FILE} {
         fallthrough
         ttl 300
@@ -188,7 +171,6 @@ ${root_zone} {
     errors
 }
 EOL
-        done < "$ROOTS_TEMP.unique"
 
         echo -e "${GREEN}✅ Successfully parsed and added ${domain_count} domains to: ${HOSTS_FILE}${RESET}"
         echo -e "${GREEN}✅ Created CoreDNS config file: ${CONF_FILE}${RESET}"
@@ -218,7 +200,7 @@ EOL
         fi
 
         # Write clean manual reference list
-        echo -e "${SNIPROXY_IP} ${ROOT_DOMAIN}" > "$HOSTS_FILE"
+        echo -e "${SNIPROXY_IP} ${ROOT_DOMAIN}\n${SNIPROXY_IP} *.${ROOT_DOMAIN}" > "$HOSTS_FILE"
         echo -e "${GREEN}✅ Created hosts file: ${HOSTS_FILE}${RESET}"
 
         # Escape dots for rewrite regex (e.g. example.com -> example\.com)
