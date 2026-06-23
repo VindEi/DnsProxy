@@ -1,5 +1,4 @@
 #!/bin/bash
-set -euo pipefail
 
 # --- Script Configuration ---
 CONF_DIR="/etc/coredns/conf.d"
@@ -7,6 +6,8 @@ HOSTS_DIR="/etc/unblocker"
 
 # Dynamic VPS IP detection (Zero hardcoding)
 SNIPROXY_IP=$(curl -s https://api.ipify.org || hostname -I | awk '{print $1}')
+
+PYTHON_SCRIPT_PATH="$(dirname "$0")/AutoDomain.py"
 
 # --- Colors for user experience ---
 GREEN='\033[0;32m'
@@ -76,7 +77,7 @@ fetch_v2fly_domains() {
     while IFS= read -r line || [ -n "$line" ]; do
         # Trim whitespace
         line=$(echo "$line" | xargs)
-        # Skip comments and empty lines
+        # Skip empty lines and comments
         [[ -z "$line" || "$line" =~ ^# ]] && continue
 
         if [[ "$line" =~ ^include: ]]; then
@@ -149,6 +150,12 @@ case "$CHOICE" in
             echo "${SNIPROXY_IP} ${domain}" >> "$HOSTS_FILE"
         done < "$DOMAINS_TEMP.sorted"
 
+        # Dynamically count the written lines
+        local domain_count=0
+        if [ -f "$HOSTS_FILE" ]; then
+            domain_count=$(wc -l < "$HOSTS_FILE")
+        fi
+
         # Write clean, comma-free CoreDNS server block config
         cat <<EOL > "$CONF_FILE"
 ${primary_domain} {
@@ -162,7 +169,7 @@ ${primary_domain} {
 }
 EOL
 
-        echo -e "${GREEN}✅ Created hosts file: ${HOSTS_FILE}${RESET}"
+        echo -e "${GREEN}✅ Successfully parsed and added ${domain_count} domains to: ${HOSTS_FILE}${RESET}"
         echo -e "${GREEN}✅ Created CoreDNS config file: ${CONF_FILE}${RESET}"
         echo -e "${CYAN}Restarting CoreDNS...${RESET}"
         sudo systemctl restart coredns
