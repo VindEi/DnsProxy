@@ -4,11 +4,12 @@
 CONF_DIR="/etc/coredns/conf.d"
 HOSTS_DIR="/etc/unblocker"
 
-# Dynamic VPS IP detection
+# Dynamic VPS IP detection (Zero manual hardcoding)
 SNIPROXY_IP=$(curl -s https://api.ipify.org || hostname -I | awk '{print $1}')
 
 PYTHON_SCRIPT_PATH="$(dirname "$0")/AutoDomain.py"
 
+# --- Colors for user experience ---
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 RED='\033[0;31m'
@@ -68,17 +69,17 @@ case "$CHOICE" in
             exit 1
         fi
 
-        # Write the simple, clean hosts entry
+        # Write clean hosts database entry
         echo -e "${SNIPROXY_IP} ${ROOT_DOMAIN}" > "$HOSTS_FILE"
         echo -e "${GREEN}✅ Created hosts file: ${HOSTS_FILE}${RESET}"
 
         # Escape dots for rewrite regex (e.g. example.com -> example\.com)
         ESCAPED_DOMAIN=$(echo "$ROOT_DOMAIN" | sed 's/\./\\./g')
 
-        # Write CoreDNS config using rewrite and hosts approach
+        # Write CoreDNS config with rewrite plugin and hosts plugin
         cat <<EOL > "$CONF_FILE"
 ${ROOT_DOMAIN} {
-    # Rewrite all wildcard subdomains to the root domain internally
+    # Dynamically rewrite wildcard subdomains to the root domain internally
     rewrite stop {
         name regex (.*)\.${ESCAPED_DOMAIN} ${ROOT_DOMAIN}
         answer auto
