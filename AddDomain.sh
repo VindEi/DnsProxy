@@ -69,17 +69,18 @@ case "$CHOICE" in
             exit 1
         fi
 
-        # Restored: Your exact original hosts format
+        # Your original hosts format
         echo -e "${SNIPROXY_IP} ${ROOT_DOMAIN}\n${SNIPROXY_IP} *.${ROOT_DOMAIN}" > "$HOSTS_FILE"
         echo -e "${GREEN}✅ Created hosts file: ${HOSTS_FILE}${RESET}"
 
-        # Restored: Your exact original server block
+        # Restored with the required forward fallback
         cat <<EOL > "$CONF_FILE"
 ${ROOT_DOMAIN}, *.${ROOT_DOMAIN} {
     hosts ${HOSTS_FILE} {
         fallthrough
         ttl 300
     }
+    forward . 1.1.1.1 8.8.8.8
     log
     errors
 }
