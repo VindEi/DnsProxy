@@ -6,7 +6,6 @@ import sys
 
 # --- Script Configuration ---
 CONF_DIR = "/etc/coredns/conf.d"
-HOSTS_DIR = "/etc/unblocker"
 
 # Smart Service-Name Map for V2Fly
 V2FLY_MAP = {
@@ -17,10 +16,6 @@ V2FLY_MAP = {
 }
 
 def fetch_domains_from_v2fly(service_name, visited=None):
-    """
-    Queries the official V2Fly database and recursively resolves nested
-    include files to gather all associated domains for a service.
-    """
     if visited is None:
         visited = set()
 
@@ -83,29 +78,28 @@ def fetch_subdomains_crtsh(domain, retries=2, delay=3):
     return set()
 
 def write_coredns_files(service_name, domains, sniproxy_ip):
-    HOSTS_FILE = os.path.join(HOSTS_DIR, f"{service_name}.hosts")
     CONF_FILE = os.path.join(CONF_DIR, f"{service_name}.conf")
 
-    # 1. Write the clean hosts database file
-    with open(HOSTS_FILE, "w") as f:
-        for domain in sorted(list(domains)):
-            f.write(f"{sniproxy_ip} {domain}\n")
-    print(f"[+] Written {len(domains)} domains to {HOSTS_FILE}")
+    # Map the exact domains as active CoreDNS zones
+    zones_string = " ".join(sorted(list(domains)))
 
-    # 2. Write separate, clean server blocks for each domain to bypass the hosts plugin limitation
+    # Self-contained template block (No external .hosts files needed!)
     with open(CONF_FILE, "w") as f:
-        for domain in sorted(list(domains)):
-            f.write(f"""{domain} {{
-    hosts {HOSTS_FILE} {{
-        fallthrough
-        ttl 300
+        f.write(f"""{zones_string} {{
+    template IN A {{
+        match ^.*$
+        answer "{{{{ .Name }}}} 300 IN A {sniproxy_ip}"
+    }}
+    template IN AAAA {{
+        match ^.*$
+        rcode NOERROR
     }}
     forward . 1.1.1.1 8.8.8.8
     log
     errors
 }}
 """)
-    print(f"[+] Created CoreDNS multi-block configuration file: {CONF_FILE}")
+    print(f"[+] Created CoreDNS template configuration file: {CONF_FILE}")
 
 def restart_coredns():
     print("[+] Restarting CoreDNS...")
@@ -117,7 +111,6 @@ def restart_coredns():
 
 def main():
     os.makedirs(CONF_DIR, exist_ok=True)
-    os.makedirs(HOSTS_DIR, exist_ok=True)
     
     if len(sys.argv) != 3:
         print("Usage: python3 <script_name.py> <service_name> <sniproxy_ip>")
