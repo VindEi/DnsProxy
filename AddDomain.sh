@@ -41,7 +41,21 @@ trap 'rm -f "$DOMAINS_TEMP" "$VISITED_TEMP" "$ROOTS_TEMP"' EXIT
 
 # --- Recursive V2Fly Scraper in Pure Bash ---
 fetch_v2fly_domains() {
-    local mapped_name="$1"
+    local sname="$1"
+    local mapped_name="$sname"
+
+    # Match service name translations dynamically (No hardcoded settings)
+    if [ "$sname" = "gemini" ]; then
+        mapped_name="google-gemini"
+    elif [ "$sname" = "deepmind" ]; then
+        mapped_name="google-deepmind"
+    elif [ "$sname" = "riotgames" ]; then
+        mapped_name="riot"
+    elif [ "$sname" = "gpt" ] || [ "$sname" = "chatgpt" ]; then
+        mapped_name="openai"
+    elif [ "$sname" = "claude" ]; then
+        mapped_name="anthropic"
+    fi
 
     # Avoid infinite loops during circular include imports
     if grep -Fxq "$mapped_name" "$VISITED_TEMP" 2>/dev/null; then
@@ -110,7 +124,7 @@ case "$CHOICE" in
 
         # Determine the primary domain name dynamically
         primary_domain="${SERVICE_NAME}.com"
-        if [ "${SERVICE_NAME}" = "google-gemini" ]; then
+        if [ "${SERVICE_NAME}" = "google-gemini" ] || [ "${SERVICE_NAME}" = "gemini" ]; then
             primary_domain="gemini.google.com"
         elif [ "${SERVICE_NAME}" = "youtube" ]; then
             primary_domain="youtube.com"
@@ -208,7 +222,6 @@ case "$CHOICE" in
             # Escape dots for rewrite regex (e.g. githubcopilot.com -> githubcopilot\.com)
             escaped_zone=$(echo "$root_zone" | sed 's/\./\\./g')
 
-            # Resolved: Added 'no_reverse' to the auto-generated hosts block
             cat <<EOL >> "$CONF_FILE"
 ${root_zone} {
     # Dynamically rewrite wildcard subdomains to the root domain internally

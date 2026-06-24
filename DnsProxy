@@ -34,9 +34,6 @@ if [ "$#" -gt 0 ]; then
             hosts_file="$HOSTS_DIR/$2.hosts"
             if [ -f "$conf_file" ] || [ -f "$hosts_file" ]; then
                 sudo rm -f "$conf_file" "$hosts_file"
-                # Rebuild unified hosts
-                sudo mkdir -p /etc/coredns
-                sudo find /etc/unblocker/ -name "*.hosts" -exec cat {} + | sudo tee /etc/coredns/unified.hosts > /dev/null
                 sudo systemctl restart coredns
                 echo -e "${GREEN}✅ Successfully removed '$2'.${RESET}"
             else
@@ -69,6 +66,12 @@ function service_status() {
     systemctl is-active --quiet coredns && dns_state="🟢 Running"
     systemctl is-active --quiet nginx && nginx_state="🟢 Running"
 
+    # Query local VPS system resource usage
+    local ram_usage
+    ram_usage=$(free -m | awk '/Mem:/ { print $3"/"$2" MB" }')
+    local cpu_load
+    cpu_load=$(uptime | awk -F'load average:' '{ print $2 }' | cut -d',' -f1 | xargs)
+
     local active_services=0
     local total_domains=0
     if [ -d "$HOSTS_DIR" ]; then
@@ -86,6 +89,7 @@ function service_status() {
     echo -e "  ${BOLD}VPS Public IP${RESET}  :  ${YELLOW}${vps_ip}${RESET}"
     echo -e "  ${BOLD}CoreDNS State${RESET}  :  ${dns_state}"
     echo -e "  ${BOLD}NGINX State${RESET}    :  ${nginx_state}"
+    echo -e "  ${BOLD}CPU Load Avg${RESET}   :  ${CYAN}${cpu_load}${RESET}      ${BOLD}RAM Usage${RESET}: ${CYAN}${ram_usage}${RESET}"
     echo -e "  ${BOLD}Active Proxies${RESET} :  ${GREEN}${active_services} services${RESET} (${CYAN}${total_domains} domains${RESET})"
     echo -e "${CYAN}└──────────────────────────────────────────────────────┘${RESET}"
     echo
@@ -205,7 +209,7 @@ function add_service() {
     clear_and_header
     echo -e "${YELLOW}➕ Add a New Proxy Service:${RESET}\n"
     echo -e "  ${CYAN}[1]${RESET} spotify"
-    echo -e "  ${CYAN}[2]${RESET} gemini"
+    echo -e "  ${CYAN}[2]${RESET} gemini (google-gemini)"
     echo -e "  ${CYAN}[3]${RESET} discord"
     echo -e "  ${CYAN}[4]${RESET} youtube"
     echo -e "  ${CYAN}[5]${RESET} openai"
@@ -272,11 +276,6 @@ function remove_service() {
 
     echo -e "\n"
     sudo rm -f "$conf_file" "$hosts_file"
-    
-    # Rebuild unified hosts on removal
-    sudo mkdir -p /etc/coredns
-    sudo find /etc/unblocker/ -name "*.hosts" -exec cat {} + | sudo tee /etc/coredns/unified.hosts > /dev/null
-    
     echo -e "${GREEN}✅ Successfully deleted '$selected_service'.${RESET}"
     sudo systemctl restart coredns
     echo
@@ -313,6 +312,65 @@ function view_config() {
     read -p "Press Enter to return..."
 }
 
+# New Self-Healing Diagnostic: Scans and terminates conflicting port 53 listeners automatically
+function run_port_diagnostic() {
+    clear_and_header
+    echo -e "${YELLOW}🔍 Running Port 53 Conflict Diagnostic...${RESET}\n"
+    
+    local conflict_found=0
+    local conflict_pids=()
+    local conflict_names=()
+    
+    # Read UDP/TCP bindings on port 53 (ignoring coredns)
+    while read -r line || [ -n "$line" ]; do
+        [[ -z "$line" ]] && continue
+        local pid
+        pid=$(echo "$line" | grep -o -E 'pid=[0-9]+' | cut -d'=' -f2 || true)
+        local name
+        name=$(echo "$line" | grep -o -E 'users:\(\("[^"]+"' | cut -d'"' -f2 || true)
+        
+        if [ -n "$pid" ] && [ "$name" != "coredns" ]; then
+            conflict_found=1
+            conflict_pids+=("$pid")
+            conflict_names+=("$name")
+        fi
+    done < <(sudo ss -tulpn | grep :53)
+    
+    if [ "$conflict_found" -eq 0 ]; then
+        echo -e "${GREEN}✅ CoreDNS has exclusive, clean ownership of Port 53!${RESET}"
+        echo -e "No conflicting processes or port-sharing blocks detected on your server."
+    else
+        echo -e "${RED}⚠️  PORT CONFLICT DETECTED!${RESET}"
+        echo -e "The following processes are occupying Port 53 and blocking CoreDNS UDP traffic:\n"
+        printf "%-10s | %-20s\n" "PID" "PROCESS NAME"
+        echo -e "-------------------------------------"
+        for i in "${!conflict_pids[@]}"; do
+            printf "%-10s | %-20s\n" "${conflict_pids[$i]}" "${conflict_names[$i]}"
+        done
+        echo
+        read -p "Would you like to kill these conflicting processes and restart CoreDNS? (y/N): " kill_confirm
+        if [[ "$kill_confirm" =~ ^[Yy]$ ]]; then
+            # Terminate conflicting processes
+            for pid in "${conflict_pids[@]}"; do
+                echo -e "${YELLOW}[+] Killing PID $pid...${RESET}"
+                sudo kill -9 "$pid" || true
+            done
+            # If systemd-resolved is active, disable it cleanly
+            if systemctl is-active --quiet systemd-resolved; then
+                echo -e "${YELLOW}[+] Disabling conflicting systemd-resolved service...${RESET}"
+                sudo systemctl stop systemd-resolved || true
+                sudo systemctl disable systemd-resolved || true
+            fi
+            sudo systemctl restart coredns
+            echo -e "\n${GREEN}✅ Conflict resolved and CoreDNS successfully restarted!${RESET}"
+        else
+            echo -e "\n${YELLOW}Diagnostic complete. No actions taken.${RESET}"
+        fi
+    fi
+    echo
+    read -p "Press Enter to return..."
+}
+
 function main_menu() {
     while true; do
         clear_and_header
@@ -328,7 +386,8 @@ function main_menu() {
         echo -e "  ${CYAN}[3]${RESET} ➕ Add a new service"
         echo -e "  ${CYAN}[4]${RESET} 🗑️  Remove a service"
         echo -e "  ${CYAN}[5]${RESET} 📝 View service configurations"
-        echo -e "  ${CYAN}[6]${RESET} 🚪 Exit"
+        echo -e "  ${CYAN}[6]${RESET} 🔍 Run Port 53 Diagnostic Test"
+        echo -e "  ${CYAN}[7]${RESET} 🚪 Exit"
         echo
         
         read -n 1 -s choice
@@ -338,7 +397,8 @@ function main_menu() {
             3) add_service ;;
             4) remove_service ;;
             5) view_config ;;
-            6) clear; exit 0 ;;
+            6) run_port_diagnostic ;;
+            7) clear; exit 0 ;;
             *) echo -e "${RED}Invalid selection.${RESET}"; sleep 0.8 ;;
         esac
     done
