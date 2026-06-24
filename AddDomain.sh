@@ -39,7 +39,7 @@ ROOTS_TEMP=$(mktemp)
 # Clean up temp files on exit
 trap 'rm -f "$DOMAINS_TEMP" "$VISITED_TEMP" "$ROOTS_TEMP"' EXIT
 
-# --- Recursive V2Fly Scraper in Pure Bash (No Presets) ---
+# --- Recursive V2Fly Scraper in Pure Bash ---
 fetch_v2fly_domains() {
     local mapped_name="$1"
 
@@ -208,7 +208,7 @@ case "$CHOICE" in
             # Escape dots for rewrite regex (e.g. githubcopilot.com -> githubcopilot\.com)
             escaped_zone=$(echo "$root_zone" | sed 's/\./\\./g')
 
-            # Corrected: Included dynamic rewrite wildcard plugin inside the automatic blocks!
+            # Resolved: Added 'no_reverse' to the auto-generated hosts block
             cat <<EOL >> "$CONF_FILE"
 ${root_zone} {
     # Dynamically rewrite wildcard subdomains to the root domain internally
@@ -217,6 +217,7 @@ ${root_zone} {
         answer auto
     }
     hosts ${HOSTS_FILE} {
+        no_reverse
         fallthrough
         ttl 300
     }
@@ -269,6 +270,7 @@ ${ROOT_DOMAIN} {
         answer auto
     }
     hosts ${HOSTS_FILE} {
+        no_reverse
         fallthrough
         ttl 300
     }

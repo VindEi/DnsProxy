@@ -24,18 +24,25 @@ function install_CoreDNS() {
         return 1
     fi
 
-    # Create config directories
+    # Create config and database directories
     sudo mkdir -p "$CONFIG_DIR"
+    sudo mkdir -p /etc/unblocker
+    sudo mkdir -p /etc/coredns
 
-    # Write placeholder so Corefile glob doesn't warning-loop on first boot
-    sudo touch "${CONFIG_DIR}/.placeholder.conf"
+    # Initialize the empty master unified hosts database
+    sudo touch /etc/coredns/unified.hosts
 
-    # CoreDNS runs on default Port 53 directly
+    # CoreDNS runs on default Port 53 with the Unified Hosts master block
     echo -e "${YELLOW}📝 Writing Corefile...${RESET}"
     sudo tee "$COREFILE" > /dev/null <<EOF
 import conf.d/*.conf
 
 . {
+    hosts /etc/coredns/unified.hosts {
+        no_reverse
+        fallthrough
+        ttl 300
+    }
     forward . 8.8.8.8 1.1.1.1
     log
     errors
@@ -129,7 +136,7 @@ EOF
 function install_Service() {
     clear
     echo -e "${YELLOW}📦 Installing required packages...${RESET}"
-    sudo apt install -y nginx-extras ufw curl tar
+    sudo apt install -y nginx-extras ufw curl tar tcpdump
 
     install_CoreDNS || return 1
     configure_nginx

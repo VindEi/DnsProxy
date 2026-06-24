@@ -34,6 +34,9 @@ if [ "$#" -gt 0 ]; then
             hosts_file="$HOSTS_DIR/$2.hosts"
             if [ -f "$conf_file" ] || [ -f "$hosts_file" ]; then
                 sudo rm -f "$conf_file" "$hosts_file"
+                # Rebuild unified hosts
+                sudo mkdir -p /etc/coredns
+                sudo find /etc/unblocker/ -name "*.hosts" -exec cat {} + | sudo tee /etc/coredns/unified.hosts > /dev/null
                 sudo systemctl restart coredns
                 echo -e "${GREEN}✅ Successfully removed '$2'.${RESET}"
             else
@@ -68,17 +71,13 @@ function service_status() {
 
     local active_services=0
     local total_domains=0
-    if [ -d "$CONFIG_DIR" ]; then
-        for file in "$CONFIG_DIR"/*.conf; do
+    if [ -d "$HOSTS_DIR" ]; then
+        for file in "$HOSTS_DIR"/*.hosts; do
             if [ -e "$file" ]; then
                 ((active_services++))
-                local sname=$(basename "$file" .conf)
-                local hfile="$HOSTS_DIR/${sname}.hosts"
-                if [ -f "$hfile" ]; then
-                    local dcount
-                    dcount=$(wc -l < "$hfile")
-                    total_domains=$((total_domains + dcount))
-                fi
+                local dcount
+                dcount=$(wc -l < "$file")
+                total_domains=$((total_domains + dcount))
             fi
         done
     fi
@@ -96,10 +95,10 @@ function select_active_service() {
     local services=()
     local count=0
     
-    for file in "$CONFIG_DIR"/*.conf; do
+    for file in "$HOSTS_DIR"/*.hosts; do
         if [ -e "$file" ]; then
             local sname
-            sname=$(basename "$file" .conf)
+            sname=$(basename "$file" .hosts)
             services+=("$sname")
             ((count++))
         fi
@@ -164,16 +163,39 @@ function manage_installation() {
 }
 
 function list_services() {
-    echo -e "${CYAN}List of Current Active Services:${RESET}"
-    local found=false
-    for file in "$CONFIG_DIR"/*.conf; do
+    clear_and_header
+    echo -e "${YELLOW}📃 Active Services Table:${RESET}\n"
+    
+    local services=()
+    local count=0
+    for file in "$HOSTS_DIR"/*.hosts; do
         if [ -e "$file" ]; then
-            basename "$file" .conf
-            found=true
+            services+=("$(basename "$file" .hosts)")
+            ((count++))
         fi
     done
-    if ! $found; then
-        echo -e "${YELLOW}(No services active)${RESET}"
+    
+    if [ "$count" -eq 0 ]; then
+        echo -e "${YELLOW}(No active services found)${RESET}"
+    else
+        printf "${CYAN}%-4s %-16s %-12s %-10s %-15s${RESET}\n" "ID" "SERVICE NAME" "TYPE" "DOMAINS" "PROXY IP"
+        echo -e "${CYAN}---------------------------------------------------------------------${RESET}"
+        for i in "${!services[@]}"; do
+            local sname="${services[$i]}"
+            local type="Manual"
+            local dcount=0
+            local target_ip="Unknown"
+            local hfile="$HOSTS_DIR/${sname}.hosts"
+            
+            if [ -f "$hfile" ]; then
+                dcount=$(wc -l < "$hfile")
+                target_ip=$(head -n 1 "$hfile" | awk '{print $1}')
+                if [ "$dcount" -gt 2 ]; then
+                    type="Automatic"
+                fi
+            fi
+            printf "%-4s %-16s %-12s %-10s %-15s\n" "$((i+1))" "$sname" "$type" "$dcount" "$target_ip"
+        done
     fi
     echo
     read -p "Press Enter to return..."
@@ -195,7 +217,7 @@ function add_service() {
     read -n 1 -s choice
     case "$choice" in
         1) service_name="spotify" ;;
-        2) service_name="google-gemini" ;; # Matches the exact V2Fly filename
+        2) service_name="google-gemini" ;;
         3) service_name="discord" ;;
         4) service_name="youtube" ;;
         5) service_name="openai" ;;
@@ -249,13 +271,14 @@ function remove_service() {
     local hosts_file="$HOSTS_DIR/$selected_service.hosts"
 
     echo -e "\n"
-    if [ -f "$conf_file" ] || [ -f "$hosts_file" ]; then
-        sudo rm -f "$conf_file" "$hosts_file"
-        echo -e "${GREEN}✅ Successfully deleted '$selected_service'.${RESET}"
-        sudo systemctl restart coredns
-    else
-        echo -e "${RED}❌ Configuration files for '$selected_service' not found.${RESET}"
-    fi
+    sudo rm -f "$conf_file" "$hosts_file"
+    
+    # Rebuild unified hosts on removal
+    sudo mkdir -p /etc/coredns
+    sudo find /etc/unblocker/ -name "*.hosts" -exec cat {} + | sudo tee /etc/coredns/unified.hosts > /dev/null
+    
+    echo -e "${GREEN}✅ Successfully deleted '$selected_service'.${RESET}"
+    sudo systemctl restart coredns
     echo
     read -p "Press Enter to return..."
 }
